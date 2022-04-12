@@ -1,0 +1,473 @@
+---
+title: "R Notebook Preprocessing and Download of Count Data"
+output: html_notebook
+---
+
+# Installing and Loading Libraries            
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+#packages_bioconductor = c("TCGAbiolinks", "SummarizedExperiment", "DESeq2", "Glimma", "limma","biomaRt", "genefilter")
+packages_bioconductor = c("DESeq2", "Glimma", "limma","biomaRt", "genefilter")
+
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed from Bioconductor and loaded
+package.check <- lapply(packages_bioconductor, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    BiocManager::install(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+}) 
+
+packages_cran = c("DT", "tidyverse","dplyr", "tibble", "stringr", "data.table", "genefilter", "ggrepel")
+  
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed from CRAN and loaded
+package.check <- lapply(packages_cran, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+
+rm(packages_cran, packages_bioconductor, package.check)
+```
+
+
+# Loading clinical data of TCGA from ICGC Data Portal
+
+```{r}
+
+# donor data
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/KIRC-US/donor.KIRC-US.tsv.gz"
+# destfile <- "../data/icgc_kirc_donor.tsv.gz"
+# # download.file(url, destfile)
+# kirc.us.donor <- read_tsv(gzfile("../data/icgc_kirc_donor.tsv.gz"))
+# 
+# kirc.us.donor <- kirc.us.donor %>%
+#   dplyr::select(c("icgc_donor_id", "submitted_donor_id", "donor_survival_time", "donor_vital_status", "donor_age_at_diagnosis", "donor_sex",  "donor_tumour_stage_at_diagnosis" )) %>% 
+#   dplyr::rename(code = "icgc_donor_id",
+#                 patient_id = "submitted_donor_id",
+#                 obs.time = "donor_survival_time",
+#                 status = "donor_vital_status",
+#                 age = "donor_age_at_diagnosis", 
+#                 gender = "donor_sex")
+# 
+# rownames(kirc.us.donor) <- kirc.us.donor$code
+
+# specimen.RECA data
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/KIRC-US/specimen.KIRC-US.tsv.gz"
+# destfile <- "../data/icgc_kirc_specimen.tsv.gz"
+# # download.file(url, destfile)
+# kirc.us.specimen <- read_tsv(gzfile("../data/icgc_kirc_specimen.tsv.gz"))
+# 
+# kirc.us.specimen <- kirc.us.specimen %>%
+#     dplyr::select(c("icgc_specimen_id", "icgc_donor_id", "submitted_sample_id", "submitted_specimen_id"))
+
+#kirc.us.clinical <- kirc.us.donor[colnames(),]
+# sample.RECA data
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/KIRC-US/sample.KIRC-US.tsv.gz"
+# destfile <- "../data/icgc_kirc_sample.tsv.gz"
+# download.file(url, destfile)
+# kirc.us.sample <- read_tsv(gzfile("../data/icgc_kirc_sample.tsv.gz"))
+
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/KIRC-US/simple_somatic_mutation.open.KIRC-US.tsv.gz"
+# destfile <- "../data/icgc_kirc_mutation.tsv.gz"
+# download.file(url, destfile)
+# kirc.us.mutation <- read_tsv(gzfile("../data/icgc_kirc_mutation.tsv.gz"))
+
+```
+
+# Loading expression data
+
+```{r}
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/KIRC-US/exp_seq.KIRC-US.tsv.gz"
+# destfile <- "../data/icgc_kirc_counts.tsv.gz"
+# download.file(url, destfile)
+kirc.us.count <- read_tsv(gzfile("../data/icgc_kirc_counts.tsv.gz"))
+
+# GRCh37 
+# Removing two genes id with more than 598 samples
+# > (table(kirc.us.count$gene_id) != 598) [table(kirc.us.count$gene_id) != 598]
+#       ? SLC35E2 
+#    TRUE    TRUE 
+# > sum (kirc.us.count$gene_id == "SLC35E2")
+# [1] 1196
+# > View(gsign_kidney)
+# > sum (kirc.us.count$gene_id == "?")
+# [1] 17342
+
+kirc.us.count <- kirc.us.count %>% 
+  dplyr::filter(!gene_id %in% c("?", "SLC35E2")) %>% 
+  dplyr::select(c("submitted_sample_id", "gene_id", "raw_read_count" )) %>% 
+  mutate(submitted_sample_id = str_replace_all(submitted_sample_id, "-", ".")) %>% 
+  pivot_wider(names_from = "submitted_sample_id", values_from = "raw_read_count") %>%
+  as.data.frame()
+
+# > colnames(kirc.us.count)[duplicated(substr(colnames(kirc.us.count),1,18))]
+# [1] "TCGA-B2-5633-01A-01R-1541-07" "TCGA-B2-3924-01A-02R-1325-07" "TCGA-B2-3923-01A-02R-1325-07" "TCGA-B2-5635-01A-01R-1541-07"
+
+kirc.us.count <- kirc.us.count[, !duplicated(substr(colnames(kirc.us.count),1,16))]
+colnames(kirc.us.count) <- substr(colnames(kirc.us.count),1,16)
+
+# Data with normalized_expression_value
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/KIRC-US/exp_array.KIRC-US.tsv.gz"
+# destfile <- "../data/icgc_kirc_array_counts.tsv.gz"
+# download.file(url, destfile)
+# kirc.us.array.count <- read_tsv(gzfile("../data/icgc_kirc_array_counts.tsv.gz"))
+
+```
+
+
+```{r}
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/KIRC-US/mirna_seq.KIRC-US.tsv.gz"
+# destfile <- "../data/icgc_kirc_mirna_counts.tsv.gz"
+# download.file(url, destfile)
+kirc.us.mirna <- read_tsv(gzfile("../data/icgc_kirc_mirna_counts.tsv.gz"))
+
+kirc.us.mirna <- kirc.us.mirna %>% 
+  dplyr::select(c("submitted_sample_id", "mirna_id", "raw_read_count", "chromosome", "chromosome_start", "chromosome_end", "chromosome_strand")) %>% 
+  mutate(submitted_sample_id = str_replace_all(submitted_sample_id, "-", ".")) %>% 
+  dplyr::rename(chr = "chromosome",
+         start = "chromosome_start",
+         end = "chromosome_end",
+         strand = "chromosome_strand")
+
+library(annotables)
+
+kirc.us.mirna <- merge(grch37[, c("ensgene", "symbol", "chr", "start", "end", "strand")], kirc.us.mirna, by.x = c("chr", "start", "end", "strand"), by.y = c("chr", "start", "end", "strand"), all.x = FALSE, all.y = TRUE)
+ 
+kirc.us.mirna <- kirc.us.mirna %>%
+  dplyr::select(c("ensgene", "symbol", "chr", "start", "end", "strand", "submitted_sample_id", "raw_read_count")) %>%
+  pivot_wider(names_from = "submitted_sample_id", values_from = "raw_read_count", values_fn = list(raw_read_count = max)) %>%
+  dplyr::rename(gene_id = "symbol") %>%
+  as.data.frame()
+
+kirc.us.mirna <-  kirc.us.mirna[rowSums2(as.matrix(kirc.us.mirna[, c(6:ncol(kirc.us.mirna))])) > 10,]
+
+# Getting the missing miRNA symbols
+genes.symbol <- apply(kirc.us.mirna[,c("chr", "start", "end")], 1, function(i){
+    x <- grch37[grch37$chr == i[1] & (grch37$start <= i[2] & grch37$end >= i[3]), c("ensgene", "symbol")]
+    x <- x[grepl(("^MIR|^hsa-"), x$symbol),]
+    x <- x[!duplicated(x$symbol),]
+    x$symbol[1]
+  })
+
+rows.na <- is.na(kirc.us.mirna$gene_id)
+kirc.us.mirna$gene_id[rows.na] <- genes.symbol[rows.na]
+rows.na <- is.na(kirc.us.mirna$gene_id)
+kirc.us.mirna$gene_id[rows.na] <- c(paste(kirc.us.mirna$chr, kirc.us.mirna$start, kirc.us.mirna$end, kirc.us.mirna$strand, sep = ":"))[rows.na]
+
+kirc.us.mirna <- kirc.us.mirna %>%
+  dplyr::select(-c("ensgene", "chr", "start", "end", "strand")) %>%
+  as.data.frame()
+
+# Removing duplicated samples:
+# > colnames(kirc.us.mirna)[duplicated(substr(colnames(kirc.us.mirna),1,16))]
+# [1] "TCGA-B2-3923-01A-02R-A27D-13" "TCGA-B2-5633-01A-01R-A27D-13" "TCGA-B2-5635-01A-01R-A27D-13" "TCGA-B2-3924-01A-02R-A27D-13"
+kirc.us.mirna <- kirc.us.mirna[, !duplicated(substr(colnames(kirc.us.mirna),1,16))]
+
+colnames(kirc.us.mirna) <- substr(colnames(kirc.us.mirna),1,16)
+
+# Removing duplicated genes:
+kirc.us.mirna <- kirc.us.mirna[!duplicated(kirc.us.mirna$gene_id), ]
+rownames(kirc.us.mirna) <- kirc.us.mirna$gene_id
+
+# > length(intersect(colnames(kirc.us.mirna), colnames(kirc.us.count)))
+# [1] 564
+
+# Number of tumor samples
+# sum(grepl("01A$" , intersect(colnames(kirc.us.mirna), colnames(kirc.us.count))))
+# [1] 486
+
+kirc.us.count <- kirc.us.count[, intersect(colnames(kirc.us.mirna), colnames(kirc.us.count))]
+
+kirc.us.count <- rbind(kirc.us.count, kirc.us.mirna[, colnames(kirc.us.count)])
+
+```
+
+
+# Downloading TCGA-KIRC clinical data from Xenabrowser
+
+```{r}
+# Survival data
+# https://xenabrowser.net/datapages/?dataset=TCGA-kirc.surviival.tsv&host=https%3A%2F%2Fgdc.xenahubs.net&removeHub=https%3A%2F%2Fxena.treehouse.gi.ucsc.edu%3A443
+        
+# url <- "https://gdc-hub.s3.us-east-1.amazonaws.com/latest/TCGA-KIRC.survival.tsv.gz"
+# destfile <- "../data/kirc_survival.tsv.gz"
+# download.file(url, destfile)
+kirc.survi <- read_tsv(gzfile("../data/kirc_survival.tsv.gz"))
+
+kirc.survi <- kirc.survi %>% 
+  mutate(sample = str_replace_all(sample, "-", ".")) %>% 
+  column_to_rownames("sample") %>% 
+  rename(status = OS, obs.time = OS.time, patient_id = "_PATIENT")
+  
+kirc.survi <- as.data.frame(kirc.survi)
+
+# Transform days to months? / 30.43945
+
+
+# Clinical data
+# https://xenabrowser.net/datapages/?dataset=TCGA-KIRC.GDC_phenotype.tsv&host=https%3A%2F%2Fgdc.xenahubs.net&removeHub=https%3A%2F%2Fxena.treehouse.gi.ucsc.edu%3A443
+url <- "https://gdc-hub.s3.us-east-1.amazonaws.com/latest/TCGA-KIRC.GDC_phenotype.tsv.gz"
+destfile <- "../data/kirc_clinical.tsv.gz"
+download.file(url, destfile)
+kirc.clini <- read_tsv(gzfile("../data/kirc_clinical.tsv.gz"))
+
+kirc.clini <- kirc.clini %>%
+  dplyr::select(c("submitter_id.samples","prior_malignancy.diagnoses","age_at_initial_pathologic_diagnosis", "gender.demographic",
+           "sample_type_id.samples", "pathologic_M", "pathologic_N", "pathologic_T")) %>% 
+  dplyr::rename(sample = "submitter_id.samples", 
+         prior.dx = "prior_malignancy.diagnoses", 
+         age = "age_at_initial_pathologic_diagnosis", 
+         gender = "gender.demographic",
+         sample.type = "sample_type_id.samples",
+         metastasis = "pathologic_M",
+         neoplasm = "pathologic_N",
+         ajcc.stage = "pathologic_T") %>% 
+  mutate(sample.type = str_replace_all(sample.type, "01", "TP") ) %>% 
+  mutate(sample.type = str_replace_all(sample.type, "11", "NT") ) %>% 
+  dplyr::filter(sample.type %in% c("TP", "NT")) %>%  
+  mutate(sample = str_replace_all(sample, "-", ".")) %>% 
+  dplyr::filter(sample %in% row.names(kirc.survi)) %>% 
+  column_to_rownames("sample") %>% 
+  mutate_if(is.character,as.factor)
+  
+kirc.clini <- cbind(kirc.clini, kirc.survi[rownames(kirc.clini),])
+
+kirc.clini$codes <- rownames(kirc.clini)
+
+rm(kirc.survi)
+
+```
+
+
+# Loading clinical data of ICGC Data Portal
+
+```{r}
+
+# donor data
+#url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/donor.RECA-EU.tsv.gz"
+#destfile <- "../data/icgc_reca_donor.tsv.gz"
+#download.file(url, destfile)
+icgc.donor <- read_tsv(gzfile("../data/icgc_reca_donor.tsv.gz"))
+
+icgc.donor <- icgc.donor %>%
+  dplyr::select(c("icgc_donor_id", "submitted_donor_id", "donor_survival_time", "donor_vital_status", "donor_age_at_diagnosis", "donor_sex",  "donor_tumour_stage_at_diagnosis" )) %>% 
+  dplyr::rename(code = 'icgc_donor_id', 
+         obs.time = 'donor_survival_time',
+         status = 'donor_vital_status',
+         age = 'donor_age_at_diagnosis', 
+         gender = 'donor_sex')
+
+icgc.donor$metastasis <- substr(icgc.donor$donor_tumour_stage_at_diagnosis, 5, 6)
+icgc.donor$neoplasm <- substr(icgc.donor$donor_tumour_stage_at_diagnosis, 3, 4)
+icgc.donor$ajcc.stage <- substr(icgc.donor$donor_tumour_stage_at_diagnosis, 1, 2)
+icgc.donor$donor_tumour_stage_at_diagnosis <- NULL 
+icgc.donor <- as.data.frame(icgc.donor)
+rownames(icgc.donor) <- icgc.donor$code
+
+# specimen.RECA data
+#url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/specimen.RECA-EU.tsv.gz"
+#destfile <- "../data/icgc_reca_specimen.tsv.gz"
+#download.file(url, destfile)
+icgc.specimen <- read_tsv(gzfile("../data/icgc_reca_specimen.tsv.gz"))
+
+icgc.specimen <- icgc.specimen %>%
+    dplyr::select(c("icgc_specimen_id", "icgc_donor_id", "submitted_specimen_id", "specimen_type"))
+
+#icgc.clinical <- icgc.donor[colnames(),]
+# # sample.RECA data
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/sample.RECA-EU.tsv.gz"
+# destfile <- "../data/icgc_reca_sample.tsv.gz"
+# download.file(url, destfile)
+icgc.sample <- read_tsv(gzfile("../data/icgc_reca_sample.tsv.gz"))
+
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/simple_somatic_mutation.open.RECA-EU.tsv.gz"
+# destfile <- "../data/icgc_reca_mutation.tsv.gz"
+# download.file(url, destfile)
+# icgc.mutation <- read_tsv(gzfile("../data/icgc_reca_mutation.tsv.gz"))
+
+```
+
+
+# Loading expression data
+
+```{r}
+url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/exp_seq.RECA-EU.tsv.gz"
+destfile <- "../data/icgc_reca_counts.tsv.gz"
+download.file(url, destfile)
+icgc.count <- read_tsv(gzfile("../data/icgc_reca_counts.tsv.gz"))
+
+# icgc.count$submitted_sample_id 
+# RT Primary tumour - solid tissue
+# RA Normal - tissue adjacent to primary
+# N Normal - blood derived
+# > sum(grepl("A$", unique(icgc.count$submitted_sample_id)))
+# [1] 45
+# > sum(!grepl("A$", unique(icgc.count$submitted_sample_id)))
+# [1] 91
+# Selecting only RT Primary tumour
+# GRCh37 
+
+icgc.count <- icgc.count %>% 
+  dplyr::filter(!grepl("A$", submitted_sample_id)) %>%  
+  dplyr::select(c("submitted_sample_id", "gene_id", "raw_read_count" )) %>% 
+  pivot_wider(names_from = "submitted_sample_id", values_from = "raw_read_count" )
+
+icgc.annot <- grch37 %>%
+  dplyr::filter(grch37$ensgene %in%  icgc.count$gene_id) %>%
+  dplyr::select(ensgene, symbol, description)
+
+fulldata.annot <- grch37 %>%
+  dplyr::filter(symbol %in%  kirc.us.count$gene_id | ensgene %in%  icgc.annot$ensgene) %>%
+  dplyr::select(ensgene, symbol, description) %>%
+  distinct(ensgene, .keep_all = TRUE) %>%
+  as.data.frame()
+  
+rownames(fulldata.annot) <- fulldata.annot$ensgene
+
+icgc.data <- icgc.count %>%
+  dplyr::filter(gene_id %in% fulldata.annot$ensgene) %>%
+  mutate(gene_id = fulldata.annot[gene_id, "symbol"]) %>%
+  distinct(gene_id, .keep_all = TRUE) %>%
+  column_to_rownames("gene_id")  %>%
+  t(.) %>%
+  as.data.frame(.)
+
+rownames(icgc.data) <- gsub("RT", "", rownames(icgc.data))
+
+kirc.data <- kirc.us.count %>% 
+  distinct(gene_id, .keep_all = TRUE) %>%
+  column_to_rownames("gene_id")  %>%
+  t(.) %>%
+  as.data.frame(.)
+
+#colnames(kirc.us.count) = str_replace_all(colnames(kirc.us.count), "-", ".")
+
+# 490 patients
+kirc.data <- kirc.data[rownames(kirc.data) %in% kirc.clini[kirc.clini$sample.type == "TP","codes"],]
+
+cols <- intersect(colnames(kirc.data),colnames(icgc.data))
+
+full.data <- rbind(kirc.data[,cols], icgc.data[,cols])
+
+icgc.clinical <- icgc.donor %>%
+  dplyr::filter(submitted_donor_id %in% rownames(full.data) ) %>%
+  distinct(submitted_donor_id, .keep_all = TRUE) %>%
+  dplyr::select(c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage")) %>%
+  mutate(status = case_when(status=="deceased" ~ 1,
+                            status=="alive" ~ 0))
+
+kirc.clinical <- kirc.clini %>%
+  dplyr::filter(codes %in% rownames(full.data) ) %>%
+  distinct(codes, .keep_all = TRUE) %>%
+  dplyr::select(c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage"))
+
+
+full.clinical <- rbind(kirc.clinical, icgc.clinical)
+full.clinical$gender <-  ifelse(full.clinical$gender=="male", 1, 0)
+full.clinical$ajcc.stage <- substr(full.clinical$ajcc.stage, 1, 2)
+full.clinical$dataset <- ifelse(substr(rownames(full.clinical),1,4) =="TCGA","TCGA", "ICGC")
+
+full.data <- cbind(full.clinical, full.data)
+
+save(full.data, file="../data/2.data.fulldata.grch37.count.rda")
+
+rm(list=setdiff(ls(), c("full.data")))
+```
+
+ Normalization with DEseq2
+
+```{r}
+load("../data/2.data.fulldata.grch37.count.rda")
+
+col_genes <- setdiff(colnames(full.data), c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage", "dataset"))
+
+library(DESeq2)
+
+## Create DESeq2Dataset object
+dds <-  DESeq2::DESeqDataSetFromMatrix(countData = as.matrix(t(full.data[, col_genes])), colData = full.data[,c("status","metastasis", "dataset")], design = ~ dataset)
+dds <-  DESeq2::estimateSizeFactors(dds, )
+full.data.deseq<- counts(dds, normalized=TRUE)
+full.data.deseq <- as.data.frame(t(full.data.deseq))
+
+full.data.deseq <- cbind(full.data[,c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage", "dataset")], full.data.deseq)
+
+save(full.data.deseq, file="../data/2.data.signatures.validation.grch37.deseq.rda")
+
+rm(list=setdiff(ls(), c("data","gsign_kidney")))
+```
+
+
+
+# Selecting genes for TCGA-KIRC
+
+```{r}
+load("../data/kirc_count.RData")
+kirc.annot$symbol.dot <-  gsub("-", ".", kirc.annot$symbol, fixed = T)
+rownames(kirc.count)  <-  gsub("-", ".", rownames(kirc.count), fixed = T)
+rownames(kirc.count)  <-  gsub("//", ".", rownames(kirc.count), fixed = T)
+rownames(kirc.count)  <-  gsub("/", ".", rownames(kirc.count), fixed = T)
+
+# Select genes ----
+genes_DEA_M0 <- readLines("../2_gene_expression_differentiation/genes.DEA.M0.vs.M1.lst")
+genes_DEA_NT <- readLines("../2_gene_expression_differentiation/genes.DEA.NT.vs.TP.lst")
+genes_risk <- readLines("../3_gene_mutational_survival/genes_mutated.highrisk.lst")
+
+genes_eqtls <- read_tsv("../data/Kidney_Cortex.v8.independent_eqtls.txt")
+genes_eqtls <- genes_eqtls %>%
+  dplyr::filter(rank == 1) %>%
+  dplyr::select(gene_id) %>%
+  as_vector(.) %>%
+  sub("\\..*", "", .) 
+
+genes_eqtls <- grch37  %>%
+  dplyr::filter(grch37$ensgene %in%  genes_eqtls) %>%
+  dplyr::select(symbol) %>%
+  as_vector(.)
+
+
+gsign_kidney <- read_delim("../data/genes_signatures_papers_kidney.csv", quote = "\"", "\t", escape_double = FALSE, trim_ws = TRUE)
+gsign_kidney <- as.data.frame(gsign_kidney)
+gsign_kidney$signature <- str_split(gsign_kidney$signature,",")
+gsign_kidney$id <- paste0("sign.",row.names(gsign_kidney))
+rownames(gsign_kidney) <- gsign_kidney$id
+genes_papers <- unlist(gsign_kidney$signature)
+genes_selection <-  union(union(union(union(genes_DEA_M0, genes_DEA_NT), genes_risk), genes_papers), genes_eqtls)
+
+genes_selection.dot <- gsub("-", ".", genes_selection, fixed = T)
+
+
+
+# Checking missing genes ----
+gene_missing <- union(setdiff(genes_papers, kirc.us.annot$symbol.dot), setdiff(genes_risk, kirc.us.annot$symbol.dot))
+
+# > gene_missing grch37
+#  [1] "FRA10AC1"  "COPRS"     "LINC00116" "TENM1"     "ERVV.2"    "ERVFRD.1"  "NFE4"      "AMER2"     "FYB1"      "GRK2"      "ARHGAP35"  "SLF2"      "PRRC2A"  
+
+gene_missing <- union(setdiff(genes_selection.dot, kirc.us.annot$symbol.dot), gene_missing)
+# > length(gene_missing)
+# [1] 1578
+
+rm(gene_missing, genes_DEA_M0, genes_DEA_NT, genes_risk, genes_papers, genes_eqtls)
+
+```
+
+# Filtering Counts
+
+
+```{r}
+save(kirc.count, kirc.clini, kirc.annot, file="../data/kirc_count.RData", compress=T)
+```
+
+
+
+
+
+
+
+
+

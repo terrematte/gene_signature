@@ -1,0 +1,547 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+load(file = "../data/2.gsign_kidney.rda")
+
+gsign_kidney <- gsign_kidney %>%
+  dplyr::filter(!id %in% c("sign.3", "sign.4",  "sign.11", "sign.13", "sign.14", "fs.genetic", "fs.mRMR.status", "fs.mRMR.time")) %>%
+  mutate(id =  fct_recode(id,
+    Ha.2014.CaInfo = "sign.1",
+    Zhan.2015.CMMM = "sign.2",
+    Dai.2016.Oncotarget = "sign.5",
+    Wan.2017.IJCancer = "sign.6",
+    Chang.2018.Medicine = "sign.7",
+    YuanLeiChen.2018.JCP = "sign.8",
+    Hu.2019.IJMS = "sign.9",
+    LiangChen.2018.JCP = "sign.10",
+    #Pan.2019.MSM.5genes = "sign.11", # removed
+    Pan.2019.MSM = "sign.12",
+    Wu.2019.FrontiersOnco = "sign.15",
+    Jiang.2020.ACS = "sign.16",
+    Zou.2020.PeerJ = "sign.17",
+    LingChen.2020.Hereditas = "sign.18",
+    DCosta.2020.SciReports = "sign.19",
+    wrap.boruta = "fs.boruta",
+    wrap.rfe = "fs.mlr.rfe",
+    wrap.mRMR = "fs.mRMR"
+    ))
+
+rownames(gsign_kidney) <- gsign_kidney$id
+
+```
+
+
+# Plot boxplot and Heatmap of Signatures metrics for train.tcga and test.icgc, filtering BoxCox+>20d&<7y
+
+
+## Plot boxplot of signatures means
+
+
+```{r}
+#rm(list=setdiff(ls(), "gsign_kidney"))
+
+# load("../data/1.data.processed.rda")
+# 
+# rownames(gsign_kidney) <- gsign_kidney$id
+# 
+# #data.filt <- data[data$obs.time > 20 & data$obs.time < 2555, ]
+# data_tcga <- data[data$dataset =="TCGA", ]
+# data_icgc <- data[data$dataset =="ICGC", ]
+```
+
+
+# Train TCGA CV 3 folds - 100 repeats
+
+## Arrange signatures means in increasing order
+
+
+```{r}
+#load("bmk_tcga_3cv_10repeats_nofilter.rda") # KIRC_2_benchmark_boxplot_tcga3v_job.R 
+#load("bmk_tcga_3cv_10repeats_no_collinear_significance.rda")
+load("bmk_tcga_3cv_10repeats_no_collinear.rda") # KIRC_2_benchmark_boxplot_tcga3v_job.R
+
+bmk_tcga_auc <- bmk_tcga %>% 
+  group_by(sign) %>%
+  summarise(auc=mean(auc_uno)) %>% 
+  arrange(auc) %>%
+  as.data.frame(.)
+
+bmk_tcga$sign <- factor(bmk_tcga$sign, levels = c(as.character(bmk_tcga_auc$sign)))
+
+dtF <- rbind(
+  data.frame(sign=bmk_tcga$sign, num=log10(bmk_tcga$p.val), cut=0.05, what="p-value of survival risk"),
+  data.frame(sign=bmk_tcga$sign, num=bmk_tcga$auc_uno, cut=0.65, what="auc on 10 years"))
+
+dtF$color <- ifelse(dtF$sign %in% bmk_tcga_auc$sign[bmk_tcga_auc$p < 0.05],"#FF1F5B", "gray80")
+
+g1 <- ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="p-value of survival risk",], mapping = aes(x = sign, y = num, colour=color), 
+               outlier.size=0.2, width=0.2) +
+  geom_hline(data=dtF[dtF$what=="p-value of survival risk",], yintercept=log10(0.05), 
+               linetype="dashed", color = "red") +
+  annotate("text", bmk_tcga_auc$sign[3], log10(0.05), vjust = -0.5, label = "mean of p-value < 0.05", color = "red") +
+  scale_x_discrete(NULL, labels = NULL)+
+  ggtitle("TCGA-KIRC with CV 3 folds in 100 repeats")+
+  theme(plot.title=element_text(), axis.text.x = element_text(),
+        axis.ticks.x.bottom = element_line(color = "white"),
+        legend.position="none") +
+  facet_wrap(~what, strip.position = "right") +
+  coord_cartesian(ylim=c(-16,0)) +
+  scale_color_manual(values=c("#FF1F5B", "gray60")) +
+  xlab("") +
+  ylab("log10(p-value)")
+
+g2 <-ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="auc on 10 years",], mapping = aes(x = sign, y = num), 
+              color = "#009ADE", outlier.size=0.2, width=0.2) +
+  geom_text(data=bmk_tcga_auc,
+    aes(y=auc, x = sign ,label=round(auc,2)),
+    color='blue', position=position_dodge(0.8)
+  ) +
+  theme(plot.title=element_text(hjust=0.5, size=12), 
+        axis.text.x = element_text(angle = 45, hjust=1),
+        axis.title.y = element_text(margin = margin(t = 0, r = 13, b = 0, l = 0))) +
+  facet_wrap(~what, strip.position = "right") +
+  #scale_y_continuous(breaks=seq(0.4,0.7,0.05)) +
+  #coord_cartesian(ylim=c(0.4,0.7))+
+  xlab("Genes Signatures") +
+  ylab("auc_uno")
+#pdf("../plots/KIRC_2_benchmark_fig1_boxplot_tcga.cv3.pdf", width = 10, height = 6)
+gE1 <- gridExtra::grid.arrange(g1, g2, ncol=1, heights=c(0.5, 1))
+#dev.off()
+
+```
+
+# Train TCGA Test ICGC - 100 repeats
+
+
+## 5_benchmark/validation_tcga_icgc_3650.rda
+
+
+
+```{r}
+# KIRC_2_benchmark_boxplot_job.R 
+load("validation_tcga_icgc_3650.rda") 
+
+bmk_icgc_auc <- bmk_icgc %>% 
+  group_by(sign) %>%
+  summarise(auc=median(auc_uno)) %>% 
+  arrange(auc) %>%
+  as.data.frame(.)
+
+bmk_icgc_pval <- bmk_icgc %>% 
+  group_by(sign) %>%
+  summarise(p=median(p.val)) %>% 
+  arrange(desc(p)) %>%
+  as.data.frame(.)
+
+bmk_icgc$sign <- factor(bmk_icgc$sign, levels = as.character(bmk_icgc_auc$sign))
+
+dtF <- rbind(
+  data.frame(sign=bmk_icgc$sign, num=bmk_icgc$p.val, cut=0.05, what="p-value of survival risk"),
+  data.frame(sign=bmk_icgc$sign, num=bmk_icgc$auc_uno, cut=0.65, what="auc on 10 years"))
+
+dtF$color <- ifelse(dtF$sign %in% bmk_icgc_pval$sign[bmk_icgc_pval$p < 0.1],"#FF1F5B", "gray80")
+
+g1 <- ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="p-value of survival risk",], mapping = aes(x = sign, y = num, colour=color), 
+               outlier.size=0.2, width=0.2) +
+  geom_hline(data=dtF[dtF$what=="p-value of survival risk",], yintercept=0.05, 
+               linetype="dashed", color = "red") +
+  annotate("text", bmk_icgc_auc$sign[3],  0.1, vjust = -0.5, label = "mean of p-value < 0.05", color = "red") +
+  scale_x_discrete(NULL, labels = NULL)+
+  ggtitle("Training TCGA-KIRC and Testing ICGC-RECA in 100 repeats")+
+  theme(plot.title=element_text(), axis.text.x = element_text(),
+        axis.ticks.x.bottom = element_line(color = "white"),
+        legend.position="none") +
+  facet_wrap(~what, strip.position = "right") +
+  coord_cartesian(ylim=c(0.05,1)) +
+  scale_color_manual(values=c("#FF1F5B", "gray60")) +
+  xlab("") +
+  ylab("p-value")
+
+g2 <-ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="auc on 10 years",], mapping = aes(x = sign, y = num), 
+              color = "#009ADE", outlier.size=0.2, width=0.2) +
+  geom_text(data=bmk_icgc_auc,
+    aes(y=auc, x = sign ,label=round(auc,2)),
+    color='blue', position=position_dodge(0.8)
+  ) +
+  theme(plot.title=element_text(hjust=0.5, size=12), 
+        axis.text.x = element_text(angle = 45, hjust=1)) +
+  facet_wrap(~what, strip.position = "right") +
+  scale_y_continuous(breaks=seq(0.4,0.7,0.05)) +
+  coord_cartesian(ylim=c(0.4,0.7))+
+  xlab("Genes Signatures") +
+  ylab("auc_uno")
+#pdf("../plots/KIRC_2_benchmark_fig1_boxplot_trn.tcga.tst.icgc.pdf", width = 10, height = 6)
+gE2 <- gridExtra::grid.arrange(g1, g2, ncol=1, heights=c(0.5, 1))
+#dev.off()
+
+```
+
+
+## Arrange signatures means in increasing order
+
+
+```{r}
+# KIRC_2_benchmark_boxplot_job.R 
+load("bmk_icgc_nofilter_2555_100repeats_no_collinear_significance.rda") # 
+load("bmk_icgc_nofilter_2555_100repeats_no_collinear.rda") # top fs.mRMR and rfe no significative
+#load("bmk_icgc1.rda") # top fs.mRMR and rfe no significative
+#load("bmk_icgc_nofilter_3650_100repeats.rda") # 
+
+bmk_icgc_auc <- bmk_icgc %>% 
+  group_by(sign) %>%
+  summarise(auc=mean(auc_uno)) %>% 
+  arrange(auc) %>%
+  as.data.frame(.)
+
+bmk_icgc_pval <- bmk_icgc %>% 
+  group_by(sign) %>%
+  summarise(p=mean(p.val)) %>% 
+  arrange(desc(p)) %>%
+  as.data.frame(.)
+
+bmk_icgc$sign <- factor(bmk_icgc$sign, levels = as.character(bmk_icgc_auc$sign))
+
+dtF <- rbind(
+  data.frame(sign=bmk_icgc$sign, num=bmk_icgc$p.val, cut=0.05, what="p-value of survival risk"),
+  data.frame(sign=bmk_icgc$sign, num=bmk_icgc$auc_uno, cut=0.65, what="auc on 7 years"))
+
+dtF$color <- ifelse(dtF$sign %in% bmk_icgc_pval$sign[bmk_icgc_pval$p < 0.05],"#FF1F5B", "gray80")
+
+g1 <- ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="p-value of survival risk",], mapping = aes(x = sign, y = num, colour=color), 
+               outlier.size=0.2, width=0.2) +
+  geom_hline(data=dtF[dtF$what=="p-value of survival risk",], yintercept=0.05, 
+               linetype="dashed", color = "red") +
+  annotate("text", bmk_icgc_auc$sign[3],  0.1, vjust = -0.5, label = "mean of p-value < 0.05", color = "red") +
+  scale_x_discrete(NULL, labels = NULL)+
+  ggtitle("Training TCGA-KIRC and Testing ICGC-RECA in 100 repeats")+
+  theme(plot.title=element_text(), axis.text.x = element_text(),
+        axis.ticks.x.bottom = element_line(color = "white"),
+        legend.position="none") +
+  facet_wrap(~what, strip.position = "right") +
+  coord_cartesian(ylim=c(0.05,1)) +
+  scale_color_manual(values=c("#FF1F5B", "gray60")) +
+  xlab("") +
+  ylab("p-value")
+
+g2 <-ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="auc on 7 years",], mapping = aes(x = sign, y = num), 
+              color = "#009ADE", outlier.size=0.2, width=0.2) +
+  geom_text(data=bmk_icgc_auc,
+    aes(y=auc, x = sign ,label=round(auc,2)),
+    color='blue', position=position_dodge(0.8)
+  ) +
+  theme(plot.title=element_text(hjust=0.5, size=12), 
+        axis.text.x = element_text(angle = 45, hjust=1)) +
+  facet_wrap(~what, strip.position = "right") +
+  scale_y_continuous(breaks=seq(0.4,0.7,0.05)) +
+  coord_cartesian(ylim=c(0.4,0.7))+
+  xlab("Genes Signatures") +
+  ylab("auc_uno")
+#pdf("../plots/KIRC_2_benchmark_fig1_boxplot_trn.tcga.tst.icgc.pdf", width = 10, height = 6)
+gE2 <- gridExtra::grid.arrange(g1, g2, ncol=1, heights=c(0.5, 1))
+#dev.off()
+
+```
+
+```{r}
+pdf("../plots/fig3_c_d_boxplots.pdf", width = 16, height = 6)
+  cowplot::plot_grid(gE1, gE2, labels = c('C', 'D'), nrow=1)
+dev.off()
+```
+
+<<<<<<< HEAD
+=======
+# Box plot only with significants genes
+
+```{r}
+#load("bmk_tcga_3cv_10repeats_nofilter.rda") # KIRC_2_benchmark_boxplot_tcga3v_job.R 
+load("bmk_tcga_3cv_10repeats_no_collinear_significance.rda")
+#load("bmk_tcga_3cv_10repeats_no_collinear.rda") # KIRC_2_benchmark_boxplot_tcga3v_job.R
+
+bmk_tcga_auc <- bmk_tcga %>% 
+  group_by(sign) %>%
+  summarise(auc=mean(auc_uno)) %>% 
+  arrange(auc) %>%
+  as.data.frame(.)
+
+bmk_tcga$sign <- factor(bmk_tcga$sign, levels = c(as.character(bmk_tcga_auc$sign)))
+
+dtF <- rbind(
+  data.frame(sign=bmk_tcga$sign, num=log10(bmk_tcga$p.val), cut=0.05, what="p-value of survival risk"),
+  data.frame(sign=bmk_tcga$sign, num=bmk_tcga$auc_uno, cut=0.65, what="auc on 10 years"))
+
+dtF$color <- ifelse(dtF$sign %in% bmk_tcga_auc$sign[bmk_tcga_auc$p < 0.05],"#FF1F5B", "gray80")
+
+g1 <- ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="p-value of survival risk",], mapping = aes(x = sign, y = num, colour=color), 
+               outlier.size=0.2, width=0.2) +
+  geom_hline(data=dtF[dtF$what=="p-value of survival risk",], yintercept=log10(0.05), 
+               linetype="dashed", color = "red") +
+  annotate("text", bmk_tcga_auc$sign[3], log10(0.05), vjust = -0.5, label = "mean of p-value < 0.05", color = "red") +
+  scale_x_discrete(NULL, labels = NULL)+
+  ggtitle("TCGA-KIRC with CV 3 folds in 100 repeats")+
+  theme(plot.title=element_text(), axis.text.x = element_text(),
+        axis.ticks.x.bottom = element_line(color = "white"),
+        legend.position="none") +
+  facet_wrap(~what, strip.position = "right") +
+  coord_cartesian(ylim=c(-16,0)) +
+  scale_color_manual(values=c("#FF1F5B", "gray60")) +
+  xlab("") +
+  ylab("log10(p-value)")
+
+g2 <-ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="auc on 10 years",], mapping = aes(x = sign, y = num), 
+              color = "#009ADE", outlier.size=0.2, width=0.2) +
+  geom_text(data=bmk_tcga_auc,
+    aes(y=auc, x = sign, label=round(auc,2)), angle=45, vjust = -1.4, size=3,
+    color='#0D4A70', position=position_dodge(1)
+  ) +
+  theme(plot.title=element_text(hjust=0.5, size=12), 
+        axis.text.x = element_text(angle = 45, hjust=1),
+        axis.title.y = element_text(margin = margin(t = 0, r = 13, b = 0, l = 0))) +
+  facet_wrap(~what, strip.position = "right") +
+  #scale_y_continuous(breaks=seq(0.4,0.7,0.05)) +
+  #coord_cartesian(ylim=c(0.4,0.7))+
+  xlab("Sellecting only significant Genes with multivariate Cox regression in Signatures") +
+  ylab("auc_uno")
+#pdf("../plots/KIRC_2_benchmark_fig1_boxplot_tcga.cv3.pdf", width = 10, height = 6)
+gE1 <- gridExtra::grid.arrange(g1, g2, ncol=1, heights=c(0.5, 1))
+#dev.off()
+
+```
+
+
+# Train TCGA Test ICGC - 100 repeats
+
+## Arrange signatures means in increasing order
+
+
+```{r}
+# KIRC_2_benchmark_boxplot_job.R 
+load("bmk_icgc_nofilter_2555_100repeats_no_collinear_significance.rda") # 
+#load("bmk_icgc_nofilter_2555_100repeats_no_collinear.rda") # top fs.mRMR and rfe no significative
+#load("bmk_icgc1.rda") # top fs.mRMR and rfe no significative
+#load("bmk_icgc_nofilter_3650_100repeats.rda") # 
+
+bmk_icgc_auc <- bmk_icgc %>% 
+  group_by(sign) %>%
+  summarise(auc=mean(auc_uno)) %>% 
+  arrange(auc) %>%
+  as.data.frame(.)
+
+bmk_icgc_pval <- bmk_icgc %>% 
+  group_by(sign) %>%
+  summarise(p=mean(p.val)) %>% 
+  arrange(desc(p)) %>%
+  as.data.frame(.)
+
+bmk_icgc$sign <- factor(bmk_icgc$sign, levels = as.character(bmk_icgc_auc$sign))
+
+dtF <- rbind(
+  data.frame(sign=bmk_icgc$sign, num=bmk_icgc$p.val, cut=0.05, what="p-value of survival risk"),
+  data.frame(sign=bmk_icgc$sign, num=bmk_icgc$auc_uno, cut=0.65, what="auc on 7 years"))
+
+dtF$color <- ifelse(dtF$sign %in% bmk_icgc_pval$sign[bmk_icgc_pval$p < 0.05],"#FF1F5B", "gray80")
+
+g1 <- ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="p-value of survival risk",], mapping = aes(x = sign, y = num, colour=color), 
+               outlier.size=0.2, width=0.2) +
+  geom_hline(data=dtF[dtF$what=="p-value of survival risk",], yintercept=0.05, 
+               linetype="dashed", color = "red") +
+  annotate("text", bmk_icgc_auc$sign[3],  0.1, vjust = -0.5, label = "mean of p-value < 0.05", color = "red") +
+  scale_x_discrete(NULL, labels = NULL)+
+  ggtitle("Training TCGA-KIRC and Testing ICGC-RECA in 100 repeats")+
+  theme(plot.title=element_text(), axis.text.x = element_text(),
+        axis.ticks.x.bottom = element_line(color = "white"),
+        legend.position="none") +
+  facet_wrap(~what, strip.position = "right") +
+  coord_cartesian(ylim=c(0.05,1)) +
+  scale_color_manual(values=c("#FF1F5B", "gray60")) +
+  xlab("") +
+  ylab("p-value")
+
+g2 <-ggplot() +
+  geom_boxplot(data=dtF[dtF$what=="auc on 7 years",], mapping = aes(x = sign, y = num), 
+              color = "#009ADE", outlier.size=0.2, width=0.2) +
+  geom_text(data=bmk_icgc_auc,
+    aes(y=auc, x = sign ,label=round(auc,2)),  vjust = -1, angle=45, size=3,
+    color='#0D4A70', position=position_dodge(1)
+  ) +
+  theme(plot.title=element_text(hjust=0.5, size=12), 
+        axis.text.x = element_text(angle = 45, hjust=1)) +
+  facet_wrap(~what, strip.position = "right") +
+  scale_y_continuous(breaks=seq(0.4,0.7,0.05)) +
+  coord_cartesian(ylim=c(0.4,0.7))+
+  xlab("Sellecting only significant Genes with multivariate Cox regression in Signatures") +
+  ylab("auc_uno")
+#pdf("../plots/KIRC_2_benchmark_fig1_boxplot_trn.tcga.tst.icgc.pdf", width = 10, height = 6)
+gE2 <- gridExtra::grid.arrange(g1, g2, ncol=1, heights=c(0.5, 1))
+#dev.off()
+
+```
+
+
+```{r}
+pdf("../plots/fig3_c_d_boxplots_significants.pdf", width = 16, height = 6)
+  cowplot::plot_grid(gE1, gE2, labels = c("C", "D"), nrow=1)
+dev.off()
+```
+>>>>>>> 6c403c8d3c600238702c44cf239c1b667add2ad4
+
+
+<!-- ```{r} -->
+<!-- #install.packages("ggthemes") # Install  -->
+<!-- library(ggthemes) # Load  -->
+
+<!-- bmk_icgc0 %>% ggplot() +  -->
+<!--   geom_boxplot(mapping =aes(x = sign_pval, y = value, color =name), width=.3) + -->
+<!--   ggtitle("Distinct Gene Signatures, training TCGA-KIRC and testing ICGC-RECA-EU")+ -->
+<!--   xlab("Gene Signatures for clear cell Renal Cell Carcinoma (ccRCC)") + -->
+<!--   theme(plot.title=element_text(hjust=0.5, size=12), axis.text.x = element_text(angle = 45, hjust=1)) + -->
+<!--   scale_y_continuous(name = "All methods AUC-Uno",  -->
+<!--                      sec.axis = sec_axis( ~ 1 - . , name = "p-value",  -->
+<!--                                           breaks=seq(0,1,0.1)), -->
+<!--                      limits=c(0, 1), breaks=seq(0,1,0.1), expand = c(0, 0) ) +  -->
+<!--   theme(axis.line.y.right = element_line(color = "#FF1F5B"),  -->
+<!--        axis.ticks.y.right = element_line(color = "#FF1F5B"), -->
+<!--        axis.title.y.right = element_text(color = "#FF1F5B"), -->
+<!--        axis.text.y.right = element_text(color = "#FF1F5B"),  -->
+<!--        axis.line.y.left = element_line(color = "#009ADE"),  -->
+<!--        axis.ticks.y.left = element_line(color = "#009ADE"), -->
+<!--        axis.title.y.left = element_text(color = "#009ADE"), -->
+<!--        axis.text.y.left = element_text(color = "#009ADE"), -->
+<!--        legend.position="bottom") + -->
+<!--   scale_x_discrete(expand=c(0,0.5))  + -->
+<!--   scale_color_manual(values=c("#009ADE", "#FF1F5B"))  #+ -->
+<!--  # ggsave("../plots/KIRC_2_benchmark_fig1_boxplot_trn.tcga.tst.icgc.pdf", width = 14, height = 9, units = c("in")) -->
+<!-- ``` -->
+
+
+# Boxplot of normalisations comparisons
+
+```{r}
+rm(list = ls())
+
+# job_benchmark_normalizations.R
+load("../data/surv/3.data.benchmark_normalizations.rda") 
+
+bmr_table_auc <- bmr_table_pp %>% 
+  group_by(pp) %>% 
+  dplyr::filter(!grepl(">", pp) )%>%
+  summarise(uno_auc=mean(surv.uno_auc)) %>%
+  arrange(uno_auc) %>%
+  as.data.frame(.)
+
+bmr_table_pp <- bmr_table_pp %>% 
+  dplyr::filter(!grepl(">", pp) )
+
+bmr_table_pp$pp <- factor(bmr_table_pp$pp, levels = as.character(bmr_table_auc$pp))
+
+g1 <- ggplot() +
+  geom_boxplot(data=bmr_table_pp, mapping = aes(x = pp, y = surv.uno_auc), 
+               outlier.size=0.2, width=0.2) +
+  #scale_x_discrete(NULL, labels = NULL)+
+  theme(plot.title=element_text(), axis.text.x = element_text(),
+        axis.ticks.x.bottom = element_line(color = "white"),
+        legend.position="none") +
+  #coord_cartesian(ylim=c(0.05,1)) +
+  theme(plot.title=element_text(hjust=0.5, size=12), 
+        axis.text.x = element_text(angle = 45, hjust=1)) +
+  xlab("Normalization Methods") +
+  ylab("auc_uno")
+
+
+pdf("../plots/fig_supl_boxplot_normalization.pdf", width = 7, height = 4.5)
+  g1 
+dev.off()
+
+```
+
+
+```{r}
+
+data_long <- data %>% 
+  dplyr::select(!c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage")) %>% 
+  pivot_longer(-dataset,names_to = "genes", values_to = "cts") 
+
+df <- data_long %>% 
+  # for each gene
+  group_by(genes, dataset) %>% 
+  # get mean and variance
+  summarise(median = median(cts)) %>% 
+  pivot_wider(names_from = "dataset", values_from = "median")
+
+# df %>% 
+#   # plot one against the other
+#   ggplot(aes(TCGA, ICGC)) +
+#   geom_point() +
+#   geom_abline(colour = "brown") 
+
+library(ggpubr)
+
+sp <- ggscatter(df, x = "TCGA", y = "ICGC",
+                add = "reg.line",  # Add regressin line
+                add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+                conf.int = TRUE # Add confidence interval
+)
+# Add correlation coefficient
+sp + stat_cor(method = "pearson", label.x = 3, label.y = 12) 
+
+
+```
+
+# Boxplot of time intervals comparisons
+
+
+```{r}
+rm(list = ls())
+
+# job_benchmark_normalizations.R
+load("../data/surv/3.data.benchmark_normalizations.rda") 
+
+bmr_table_auc <- bmr_table_pp %>% 
+  group_by(pp) %>% 
+  dplyr::filter(grepl("BoxCox", pp) )%>%
+  summarise(uno_auc=mean(surv.uno_auc)) %>%
+  arrange(uno_auc) %>%
+  as.data.frame(.)
+
+bmr_table_pp <- bmr_table_pp %>% 
+  dplyr::filter(grepl("BoxCox", pp) )
+
+bmr_table_pp$pp <- factor(bmr_table_pp$pp, levels = as.character(bmr_table_auc$pp))
+
+g1 <- ggplot() +
+  geom_boxplot(data=bmr_table_pp, mapping = aes(x = pp, y = surv.uno_auc), 
+               outlier.size=0.2, width=0.2) +
+  #scale_x_discrete(NULL, labels = NULL)+
+  theme(plot.title=element_text(), axis.text.x = element_text(),
+        axis.ticks.x.bottom = element_line(color = "white"),
+        legend.position="none",
+        axis.title.y = element_text(margin = margin(t = 0, r = 20, b = 0, l = 0))) +
+  #coord_cartesian(ylim=c(0.05,1)) +
+  theme(plot.title=element_text(hjust=0.5, size=12), 
+        axis.text.x = element_text(angle = 45, hjust=1)) +
+  xlab("Intervals for prediction") +
+  ylab("auc_uno")
+
+pdf("../plots/fig_supl_boxplot_time_intervals.pdf", width = 7, height = 4.5)
+g1
+dev.off()
+
+```
+
+

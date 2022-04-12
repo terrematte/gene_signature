@@ -1,0 +1,561 @@
+---
+title: "Genes Enrichment of Kidney Cancer (TCGA-KIRC)"
+output:
+# pdf_document: default
+  # html_document: 
+  #   default
+  github_document: 
+    df_print: paged
+    html_preview: FALSE
+    keep_html: FALSE
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_format = "all") })      
+---
+
+  
+```{r error=TRUE, message=FALSE, warning=FALSE, include=FALSE, purl=FALSE, results='hide'}
+## This chunk automatically generates a text .R version of this script when running within knitr.
+# input  = knitr::current_input()  # filename of input document
+# output = paste(tools::file_path_sans_ext(input), 'R', sep = '.')
+# try(knitr::purl(input,output,documentation=2,quiet=T), silent = TRUE)
+# Avoid duplicate label error of knitr::purl
+options(knitr.duplicate.label = 'allow')
+# Code to browse the markdown file with renderized images.
+knitr::opts_chunk$set(
+  fig.path = "figs/gene_enrich_"
+)
+```
+
+
+# Installing and Loading Libraries            
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+if(!require('tidyverse')){install.packages('tidyverse')} 
+if(!require(gprofiler2)){install.packages("gprofiler2")}
+if(!require(cowplot)){install.packages("cowplot")}
+if(!require(ggrepel)){install.packages("ggrepel")}
+
+if(!require('clusterProfiler')){BiocManager::install("clusterProfiler")} 
+if(!require('enrichplot')){BiocManager::install("enrichplot")} 
+if(!require('org.Hs.eg.db')){BiocManager::install("org.Hs.eg.db")} 
+if(!require('annotables')){BiocManager::install("stephenturner/annotables")} 
+if(!require('ReactomePA')){BiocManager::install("ReactomePA")} 
+if(!require('DOSE')){BiocManager::install("DOSE")} 
+```
+
+
+```{r}
+load("../data/dea.M0.M1.rda")
+load("../data/dea.NT.TP.rda")
+load("../data/genes.significatives.rda")
+load("../data/2.gsign_kidney.rda")
+#load(file="../data/kirc_count.RData")
+
+gsign_kidney <- gsign_kidney %>%
+  dplyr::filter(!id %in% c("sign.3", "sign.4",  "sign.11", "sign.13", "sign.14", "fs.genetic", "fs.mRMR.status", "fs.mRMR.time")) %>%
+  mutate(id =  fct_recode(id,
+    Ha.2014.CaInfo = "sign.1",
+    Zhan.2015.CMMM = "sign.2",
+    Dai.2016.Oncotarget = "sign.5",
+    Wan.2017.IJCancer = "sign.6",
+    Chang.2018.Medicine = "sign.7",
+    YuanLeiChen.2018.JCP = "sign.8",
+    Hu.2019.IJMS = "sign.9",
+    LiangChen.2018.JCP = "sign.10",
+    #Pan.2019.MSM.5genes = "sign.11", # removed
+    Pan.2019.MSM = "sign.12",
+    Wu.2019.FrontiersOnco = "sign.15",
+    Jiang.2020.ACS = "sign.16",
+    Zou.2020.PeerJ = "sign.17",
+    LingChen.2020.Hereditas = "sign.18",
+    DCosta.2020.SciReports = "sign.19",
+    wrap.boruta = "fs.boruta",
+    wrap.rfe = "fs.mlr.rfe",
+    wrap.mRMR = "fs.mRMR"
+    ))
+rownames(gsign_kidney) <- gsign_kidney$id
+
+list_mRMR <- readLines("../7_model_interpretation/list_mRMR.txt")
+gsign_kidney["wrap.mRMR", "signature"][[1]] <- list(list_mRMR)
+
+
+```
+
+```{r}
+library(annotables)
+# dea.NT.TP
+rownames(dea.NT.TP) <- dea.NT.TP$symbol
+
+sign.FC <- dea.NT.TP$logFC
+names(sign.FC)<- dea.NT.TP$symbol
+
+#sign <- setdiff(gsign_kidney[i, "signature"][[1]], c("obs.time", "status", "age","gender", "prior.dx"))
+
+grch37.dea.NT.TP <-  grch37 %>%
+  dplyr::filter(symbol %in% dea.NT.TP$symbol) %>%
+  dplyr::select(c("symbol", "entrez"))
+
+dea.NT.TP.entrez <- merge(grch37.dea.NT.TP[,c("symbol", "entrez")], dea.NT.TP[,c("symbol", "logFC")], by="symbol", no.dups=T) 
+dea.NT.TP.entrez<- dea.NT.TP.entrez[!duplicated(dea.NT.TP.entrez),]
+
+grch38.dea.NT.TP <-  grch38 %>%
+  dplyr::filter(symbol %in% dea.NT.TP.entrez$symbol[is.na(dea.NT.TP.entrez$entrez)]) %>%
+  dplyr::filter(!is.na(entrez)) %>%
+  dplyr::select(c("symbol", "entrez"))
+
+dea.NT.TP.entrez <- merge(grch38.dea.NT.TP[,c("symbol", "entrez")], dea.NT.TP.entrez[,c("symbol",  "entrez", "logFC")], all=T, by="symbol", no.dups=T) 
+
+dea.NT.TP.entrez<- dea.NT.TP.entrez[!duplicated(dea.NT.TP.entrez),]
+dea.NT.TP.entrez$entrez <- dea.NT.TP.entrez$entrez.y
+dea.NT.TP.entrez$entrez <- ifelse(is.na(dea.NT.TP.entrez$entrez) , dea.NT.TP.entrez$entrez.x , dea.NT.TP.entrez$entrez)  
+dea.NT.TP.entrez<- dea.NT.TP.entrez[!is.na(dea.NT.TP.entrez$entrez),]
+dea.NT.TP.entrez<- dea.NT.TP.entrez[!duplicated(dea.NT.TP.entrez$symbol),]
+rownames(dea.NT.TP.entrez) <- dea.NT.TP.entrez$symbol
+
+# dea.M0.M1
+
+rownames(dea.M0.M1) <- dea.M0.M1$symbol
+
+grch37.dea.M0.M1 <-  grch37 %>%
+  dplyr::filter(symbol %in% dea.M0.M1$symbol) %>%
+  dplyr::select(c("symbol", "entrez"))
+
+dea.M0.M1.entrez <- merge(grch37.dea.M0.M1[,c("symbol", "entrez")], dea.M0.M1[,c("symbol", "logFC")], by="symbol", no.dups=T) 
+
+dea.M0.M1.entrez<- dea.M0.M1.entrez[!duplicated(dea.M0.M1.entrez),]
+
+grch38.dea.M0.M1 <-  grch38 %>%
+  dplyr::filter(symbol %in% dea.M0.M1.entrez$symbol[is.na(dea.M0.M1.entrez$entrez)]) %>%
+  dplyr::filter(!is.na(entrez)) %>%
+  dplyr::select(c("symbol", "entrez"))
+
+dea.M0.M1.entrez <- merge(grch38.dea.M0.M1[,c("symbol", "entrez")], dea.M0.M1.entrez[,c("symbol",  "entrez", "logFC")], all=T, by="symbol", no.dups=T) 
+
+dea.M0.M1.entrez<- dea.M0.M1.entrez[!duplicated(dea.M0.M1.entrez),]
+dea.M0.M1.entrez$entrez <- dea.M0.M1.entrez$entrez.y
+dea.M0.M1.entrez$entrez <- ifelse(is.na(dea.M0.M1.entrez$entrez) , dea.M0.M1.entrez$entrez.x , dea.M0.M1.entrez$entrez)  
+dea.M0.M1.entrez<- dea.M0.M1.entrez[!is.na(dea.M0.M1.entrez$entrez),]
+dea.M0.M1.entrez<- dea.M0.M1.entrez[!duplicated(dea.M0.M1.entrez$symbol),]
+rownames(dea.M0.M1.entrez) <- dea.M0.M1.entrez$symbol
+
+sign.NT.TP <- dea.NT.TP.entrez$logFC
+names(sign.NT.TP) <- dea.NT.TP.entrez$entrez
+sign.NT.TP <- sign.NT.TP[!is.na(sign.NT.TP)]
+
+sign.M0.M1 <- dea.M0.M1.entrez$logFC
+names(sign.M0.M1) <- dea.M0.M1.entrez$entrez
+sign.M0.M1 <- sign.M0.M1[!is.na(sign.M0.M1)]
+rm(dea.M0.M1.entrez,  grch38.dea.M0.M1,  grch37.dea.M0.M1, dea.NT.TP.entrez, grch38.dea.NT.TP, grch37.dea.NT.TP)
+
+```
+
+
+# Metastasis
+
+# enrichDO - Disease Ontology (DO)
+
+```{r}
+library(org.Hs.eg.db)
+sign <-  setdiff(rownames(res), c("obs.time", "status", "age","gender", "prior.dx"))
+#sign <- gsub(".", "-", sign, fixed = T)
+
+sign_entrez <- mapIds(org.Hs.eg.db, keys = sign, keytype = "SYMBOL", column="ENTREZID")
+
+genes_selection <- setdiff(colnames(data) , c("obs.time", "status", "age","gender", "prior.dx"))
+
+# x_met_DO <- enrichDO(gene          = sign_entrez,
+#               ont           = "DO",
+#               pvalueCutoff  = 0.05,
+#               pAdjustMethod = "BH",
+#               universe      = names(genes_selection),
+#               minGSSize     = 5,
+#               maxGSSize     = 500,
+#               qvalueCutoff  = 0.05,
+#               readable      = FALSE)
+# 
+# x_met_DO <- setReadable(x_met_DO, 'org.Hs.eg.db')
+# head(x_met_DO, 20) %>% 
+#   knitr::kable(.)
+```
+
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library("clusterProfiler")
+
+gene_signatureCluster <- list()
+
+for(i in rownames(gsign_kidney)){
+  sign <-  setdiff(gsign_kidney[i, "signature"][[1]], c("obs.time", "status", "age","gender", "prior.dx"))
+  sign.entrez1 <- mapIds(org.Hs.eg.db, keys = sign, keytype = "SYMBOL", column="ENTREZID")
+  sign.miss <- names(sign.entrez1[is.na(sign.entrez1)])
+  sign.entrez2 <- grch37 %>%
+    dplyr::filter(symbol %in% sign.miss) %>%
+    pull(entrez)
+  sign.miss <- sign.miss[is.na(sign.entrez2)]
+  sign.entrez3 <- grch38 %>%
+    dplyr::filter(symbol %in% sign.miss ) %>%
+    pull(entrez)
+  sign.miss <- sign.miss[is.na(sign.entrez3)]
+  sign_entrez <- union(union(sign.entrez1, sign.entrez2),sign.entrez3)
+  sign_entrez <- sign_entrez[!is.na(sign_entrez)]
+  gene_signatureCluster[[i]] <- as.vector(sign_entrez)[!is.na(sign_entrez)]
+}
+
+```
+
+```{r}
+ggo_MF <- groupGO(gene     = sign_entrez,
+               OrgDb    = org.Hs.eg.db,
+               ont      = "MF",
+               level    = 2, 
+               readable = T)
+
+ggo_MF@result <- ggo_MF@result %>% dplyr::filter(!Description %in% c("protein tag", "structural molecule activity")) 
+
+ggo_BP <- groupGO(gene     = sign_entrez,
+               OrgDb    = org.Hs.eg.db,
+               ont      = "BP",
+               level    = 2, 
+               readable = T)
+
+ggo_BP@result <- ggo_BP@result %>% dplyr::filter(!Description %in% 
+                                                   c("biological regulation",
+                                                     "pigmentation",
+                                                     "multi−organism process",
+                                                     "developmental process",
+                                                     "cell proliferation",
+                                                     "reproduction",
+                                                     "reproductive process",
+                                                     "immune system process")) 
+
+# ggo_CC <- groupGO(gene     = sign_entrez,
+#                OrgDb    = org.Hs.eg.db,
+#                ont      = "CC",
+#                level    = 2, 
+#                readable = T)
+
+```
+
+
+```{r}
+library(enrichplot)
+edo_PA <- ReactomePA::enrichPathway(gene_signatureCluster[["wrap.mRMR"]])
+edox_PA <- setReadable(edo_PA, 'org.Hs.eg.db', 'ENTREZID')
+
+edo_DO <- enrichDO(gene_signatureCluster[["wrap.mRMR"]])
+edox_DO <- setReadable(edo_DO, 'org.Hs.eg.db', 'ENTREZID')
+
+edo_DGN <- enrichDGN(gene_signatureCluster[["wrap.mRMR"]])
+edox_DGN <- setReadable(edo_DGN, 'org.Hs.eg.db', 'ENTREZID')
+
+edox_DGN@result <- edox_DGN@result %>% 
+#  dplyr::filter(!Description %in% c("Acne", "Dermatitis, Irritant", "Weight decreased", "Hypogonadotropic hypogonadism","Helicobacter pylori (H. pylori) infection in conditions classified elsewhere and of unspecified site","EPIDERMAL DIFFERENTIATION COMPLEX", "Skin Diseases, Infectious", "Chronic idiopathic urticaria", "Bullous pemphigoid", "Dermatitis, Occupational", "Keratoconjunctivitis, Vernal", "Testicular hypogonadism", "Gonadal Dysgenesis, 46,XY", "46, XY female", "Candidiasis, Vulvovaginal", "Depressive Symptoms", "EPIDERMAL DIFFERENTIATION COMPLEX", "Substance Withdrawal Syndrome")) %>%
+    dplyr::filter(Description %in% c("Anemia of chronic disease", "Pre−Eclampsia", "Eclampsia", "Chronic kidney disease stage 5", "NEPHROLITHIASIS, CALCIUM OXALATE", "Klinefelter Syndrome" ,"Neoplasm Recurrence, Local", "Hyperplasia", "Carcinoma, Transitional Cell", "Reticulosarcoma")) %>% 
+dplyr::mutate(Description =  fct_recode(Description, 
+            "Nephrolithiasis, Calcium Oxalate" = "NEPHROLITHIASIS, CALCIUM OXALATE"))
+
+png("../plots/dotplot_enrichPA0.png", width = 900, height = 300, units = "px",  pointsize = 18)
+dotplot(edox_PA, showCategory = 20,  x = "GeneRatio")
+dev.off()
+
+png("../plots/dotplot_enrichPA0.png", width = 900, height = 300, units = "px",  pointsize = 18)
+dotplot(edox_PA, showCategory = 20,  x = "GeneRatio")
+dev.off()
+
+png("../plots/dotplot_enrichDGN0.png", width = 900, height = 300, units = "px",  pointsize = 18)
+dotplot(edox_DGN, showCategory = 20,  x = "GeneRatio")
+dev.off()
+
+```
+
+```{r}
+# 
+# 
+# prow <- plot_grid(
+#   p1_DGN + scale_x_discrete(limits = levels(p1$data$Gene)) + theme(legend.position="none", axis.text.x = element_blank(),
+#         axis.ticks.x = element_blank())  +  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red'),
+#   # p2 + scale_x_discrete(limits = levels(p1$data$Gene)) + theme(legend.position="none", axis.text.x = element_blank(),
+#   #       axis.ticks.x = element_blank()) +  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red'),
+#   p2_PA + scale_x_discrete(limits = levels(p1$data$Gene)) + theme(legend.position="none") +  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red'),
+#   align = 'v',
+#   labels = c("DisGeNET", 
+#              "Disease Ontology", 
+#              "Reactome Pathways"),
+#   vjust = c(0.3, 0.4),
+#   hjust = -0.1,
+#   ncol = 1,
+#   rel_heights = c(1,0.23)
+# )
+# 
+# legend_b <- get_legend(
+#   p1 + 
+#     guides(color = guide_legend(nrow = 1)) +
+#     theme(legend.position = "bottom") +  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red')
+# )
+# 
+# # add the legend underneath the row we made earlier. Give it 10%
+# # of the height of one plot (via rel_heights).
+# pg2 <- plot_grid(NULL, prow, legend_b, ncol = 1, rel_heights = c(.03, 1, .1)) +
+#   ggsave("../plots/KIRC_mRMR_heatplot_Disease_analysis.pdf", width = 6, height =7, device = 'pdf' )
+
+```
+
+
+
+```{r}
+p1 <- heatplot(ggo_MF, foldChange=sign.NT.TP)
+p2 <- heatplot(ggo_BP, foldChange=sign.NT.TP)
+p1_DGN <- heatplot(edox_DGN, foldChange=sign.NT.TP)
+p2_PA <- heatplot(edox_PA, foldChange=sign.NT.TP)
+
+prow <- plot_grid(
+  p1 + scale_x_discrete(limits = levels(p2$data$Gene)) + theme(legend.position="none", axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red'),
+  p2 + scale_x_discrete(limits = levels(p2$data$Gene)) + theme(legend.position="none", axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red'),
+  p1_DGN + scale_x_discrete(limits = levels(p2$data$Gene)) + theme(legend.position="none", axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())  +  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red'),
+  p2_PA + scale_x_discrete(limits = levels(p2$data$Gene)) + theme(legend.position="none") +  
+      scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red'),
+  align = 'v',
+  labels = c("Molecular Function", 
+             "Biological Process",
+             "DisGeNET", 
+             "Disease Ontology"),
+  vjust = c(0.3, 0.4),
+  hjust = -0.1,
+  ncol = 1,
+  rel_heights = c(0.26, 0.9, 0.48, 0.35)
+)
+
+legend_b <- get_legend(
+  p1 + 
+    guides(color = guide_legend(nrow = 1)) +
+    theme(legend.position = "bottom") +  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red') 
+)
+
+# add the legend underneath the row we made earlier. Give it 10%
+# of the height of one plot (via rel_heights).
+#pdf("../plots/fig_6_heatplot.pdf", width = 9, height = 7)
+  plot_grid(NULL, prow, legend_b, ncol = 1, rel_heights = c(.03, 1, .08))  
+#dev.off()
+
+
+```
+
+
+
+
+```{r}
+library("pathview")
+hsa05211 <- pathview(gene.data  = sign.M0.M1,
+                     pathway.id = "hsa05211",
+                     species    = "hsa",
+                     limit      = list(gene=max(abs(sign.M0.M1)), cpd=1),
+                     out.suffix = "_M0.M1"
+                     )
+
+hsa05211 <- pathview(gene.data  = sign.NT.TP,
+                     pathway.id = "hsa05211",
+                     species    = "hsa",
+                     limit      = list(gene=max(abs(sign.NT.TP)), cpd=1),
+                     out.suffix = "_NT.TP"
+                     )
+```
+
+
+```{r}
+# geneList <- sign.NT.TP[gene_signatureCluster$wrap.mRMR]
+# geneList <- geneList[order(geneList, decreasing = T)]
+# geneList <- geneList[!is.na(geneList)]
+geneList <- sign.FC[sign]
+geneList <- geneList[order(geneList, decreasing = T)]
+geneList <- geneList[!is.na(geneList)]
+
+ego_cc <- gseGO(geneList     = geneList,
+              OrgDb        = org.Hs.eg.db,
+              ont          = "ALL",
+              keyType      = "SYMBOL", 
+              nPerm        = 1000,
+              minGSSize    = 2,
+              maxGSSize    = 500,
+              pvalueCutoff = 0.05,
+              verbose      = FALSE)
+
+dotplot(ego_cc)
+```
+
+
+<!-- ```{r} -->
+<!-- #fun='groupGO', OrgDb='org.Hs.eg.db' -->
+<!-- # No SIGNIFICATIVE ENRICHMENT -->
+<!-- ck <- compareCluster(geneCluster = gene_signatureCluster, -->
+<!--                              fun='groupGO', OrgDb='org.Hs.eg.db') -->
+
+<!-- p <- clusterProfiler::dotplot(ck) -->
+
+<!-- p + theme(axis.text.x=element_text(angle=45, hjust=1)) +  -->
+<!--   ggsave("../plots/KIRC_6_enrichment_compareCluster_groupGO.pdf", width = 15, height = 15, device = 'pdf' ) -->
+
+<!-- ``` -->
+
+
+```{r}
+list_cluster <- c("wrap.mRMR", "wrap.rfe", "wrap.boruta", "filt.rpart", "filt.xgboost", "Zou.2020.PeerJ", "DCosta.2020.SciReports", "YuanLeiChen.2018.JCP")
+#gene_signatureCluster[list_cluster]
+
+ck <- compareCluster(geneCluster = gene_signatureCluster[list_cluster], fun = "enrichDO")
+
+p <- clusterProfiler::dotplot(ck)
+
+p + theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggsave("../plots/KIRC_6_enrichment_compareCluster_enrichDO.pdf", width = 10, height = 7, device = 'pdf' )
+```
+
+<!-- ```{r} -->
+<!-- # No SIGNIFICATIVE ENRICHMENT -->
+<!-- ck <- compareCluster(geneCluster = gene_signatureCluster, fun = "enrichNCG") -->
+
+<!-- p <- clusterProfiler::dotplot(ck) -->
+
+<!-- p + theme(axis.text.x=element_text(angle=45, hjust=1)) +  -->
+<!--   ggsave("../plots/KIRC_6_enrichment_compareCluster_enrichNCG.pdf", width = 15, height = 15, device = 'pdf' ) -->
+<!-- ``` -->
+
+```{r}
+list_cluster <- c("wrap.mRMR", "wrap.rfe", "wrap.boruta", "filt.rpart", "filt.xgboost", "Zou.2020.PeerJ", "DCosta.2020.SciReports" , "Jiang.2020.ACS", "YuanLeiChen.2018.JCP",  "Chang.2018.Medicine", "Ha.2014.CaInfo")
+#gene_signatureCluster[list_cluster]
+
+ck <- compareCluster(geneCluster = gene_signatureCluster[list_cluster], fun = "enrichDGN")
+
+ck@compareClusterResult <- ck@compareClusterResult %>% 
+  dplyr::filter(!Description %in% c("Prostatic Hyperplasia","Arthropathy","Cataract" ,"Ataxia","Anhedonia", "Inattention", "Cocaine Abuse"))
+  
+p <- clusterProfiler::dotplot(ck)
+
+p + theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggsave("../plots/KIRC_6_enrichment_compareCluster_enrichDGN.pdf", width = 14, height = 10, device = 'pdf' )
+```
+```{r}
+# bp <- enrichGO(gene_signatureCluster[["wrap.mRMR"]], ont="BP",  OrgDb='org.Hs.eg.db')
+# library(GOSemSim)
+# library(DOSE)
+# #enrichMap(bp)
+```
+
+<!-- ```{r} -->
+<!-- # No results for signatures  -->
+<!-- ck <- compareCluster(geneCluster = gene_signatureCluster, fun = "enrichKEGG") -->
+
+<!-- p <- clusterProfiler::dotplot(ck) -->
+
+<!-- p + theme(axis.text.x=element_text(angle=45, hjust=1)) +  -->
+<!--   ggsave("../plots/KIRC_6_enrichment_compareCluster_enrichKEGG.pdf", width = 15, height = 15, device = 'pdf' ) -->
+<!-- ``` -->
+
+```{r}
+require(ReactomePA)
+
+list_cluster <- c("wrap.mRMR", "wrap.boruta", "wrap.gbm","filt.rpart", "filt.gbm", "filt.xgboost")
+#gene_signatureCluster[list_cluster]
+ck <- compareCluster(geneCluster = gene_signatureCluster[list_cluster], fun = "enrichPathway")
+
+p <- clusterProfiler::dotplot(ck)#, showCategory=15
+
+p + theme(axis.text.x=element_text(angle=45, hjust=1)) + 
+  ggsave("../plots/KIRC_6_enrichment_compareCluster_ReactomePA.pdf", width = 8, height = 4.5, device = 'pdf' )
+```
+No results for:
+filt.gbm
+filt.rpart
+filt.xgboost
+wrap.boruta
+
+
+# enrichKEGG
+
+
+```{r}
+library(enrichplot)
+edo <- enrichDGN(gene_signatureCluster[["wrap.boruta"]])
+edox <- setReadable(edo, 'org.Hs.eg.db', 'ENTREZID')
+
+clusterProfiler::heatplot(edox, foldChange=sign.NT.TP)
+```
+ 
+ 
+```{r}
+if(!require(org.Hs.eg.db)){install.packages("org.Hs.eg.db")}
+if(!require(clusterProfiler)){install.packages("clusterProfiler")}
+
+geneslist_mRMR <- c("CLEC18C", "AL121987.1", "MT1G", "MYADML2", "OPN4", "NFE4", "CASR", "AL138830.2", "AL391095.1", "ANXA8", "TPSD1", "AL357507.1", "ORM2", "LINC00865", "AC106047.1", "IDO1", "NR0B1", "CRH", "GNB3", "HHLA2", "FOXJ1", "GOLGA6L9", "DACH2", "LINC01732", "FLG", "LINC00896", "LINC01956", "EEF1DP5", "IGFN1", "DPP6", "HRH2", "SULT4A1", "AC078950.1", "AP000697.1", "PLG", "KLRC2", "KISS1", "C3orf85", "SAA1", "LINC00973", "MICG", "HOTAIRM1", "SEMA3G", "VSX1", "LINC01436", "ANKRD33", "AC002451.1", "CHAT", "AC093001.1",  "age", "ZIC2", "SLC16A12", "AR", "AL353637.1", "AC008663.1", "AC105384.2", "TNNT1", "AL355796.1", "BECN2", "AC091812.1", "IL4", "OTX1", "LINC00524", "WFDC3", "LIMCH1")
+
+geneslist_maped <- mapIds(org.Hs.eg.db, keys = geneslist_mRMR, keytype = "SYMBOL", column="ENTREZID")
+
+geneslist_maped <- geneslist_maped[!is.na(geneslist_maped)]
+
+geneslist <- list()
+geneslist$mRMR  <- as.vector(geneslist_maped)
+#geneslist$EA  <- as.vector(geneslist_EA_maped)
+
+# https://rdrr.io/bioc/clusterProfiler/man/compareCluster.html
+ck <- clusterProfiler::compareCluster(geneCluster = geneslist,
+                                      fun='groupGO', OrgDb='org.Hs.eg.db')
+
+dotplot(ck)
+
+ck <- clusterProfiler::compareCluster(geneCluster = geneslist,
+                                      fun="enrichKEGG",
+                                      organism="hsa", pvalueCutoff=0.05)
+
+dotplot(ck)
+
+
+ck <- clusterProfiler::compareCluster(geneCluster = geneslist,
+                                      fun="enrichDO")
+
+dotplot(ck)
+
+
+ck <- clusterProfiler::compareCluster(geneCluster = geneslist,
+                                      fun="enrichPathway")
+
+dotplot(ck)
+
+
+# https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html#visualization
+if(!require(gprofiler2)){install.packages("gprofiler2")}
+
+# enrichment analysis
+gp = gost(list_mRMR,
+          significant = TRUE,
+          user_threshold = 0.05,
+          correction_method = "fdr",
+          organism = "hsapiens")
+
+p1 = gostplot(gp, capped = F, interactive = TRUE)
+
+#p1 = gostplot(gp, interactive = FALSE)
+
+publish_gostplot(p1) #highlight_terms =c("CORUM:1514", "CORUM:2160", "CORUM:6087", "GO:1990405", 
+#                                        "REAC:R-HSA-500792", "REAC:R-HSA-4164", "WP:WP176"))
+
+
+# enrichment analysis
+gp_EA = gost(geneslist_EA, 
+             user_threshold = 0.05,
+             organism = "hsapiens")
+
+multi_gostres2 <- gost(query = list("EA" = geneslist_EA,
+                                    "AA" = geneslist_AA), 
+                       multi_query = TRUE)
+
+gostplot(multi_gostres2, capped = TRUE, interactive = TRUE)
+
+```
+ 
+ 

@@ -1,0 +1,34 @@
+---
+title: "R Notebook - Supplementary Figures: Forrest Plot for Cox model"
+output: html_notebook
+---
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+if(!require("tidyverse")){install.packages("tidyverse")}
+if(!require("finalfit")){install.packages("finalfit")}
+
+```
+
+```{r}
+load("../data/1.data.processed.rda")
+```
+
+```{r}
+
+sign <- c("age", "ZIC2", "SEMA3G", "SAA1", "OTX1", "LINC01732", "LIMCH1", "IL4", "HHLA2", "GNB3", "FOXJ1", "DPP6", "AR", "AL353637.1")
+
+# surv_obj <- Surv(time = data$obs.time, event = data$status)
+# 
+# fit.coxph <- coxph(as.formula(paste0("surv_obj ~ ", paste(sign, collapse= " + "))), data)
+
+dependent_os = "Surv(obs.time, status)"
+
+pdf(file = "../plots/coxph_mRMR_significative1.pdf", width = 13, height = 3)
+data %>%
+  hr_plot(dependent_os, sign) 
+dev.off()
+
+```
+

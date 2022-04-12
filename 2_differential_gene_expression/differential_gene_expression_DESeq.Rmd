@@ -1,0 +1,434 @@
+---
+title: "Pipeline of Differential Expression Analysis of KIRC data"
+output: 
+  html_document: 
+    default
+  github_document: 
+    df_print: paged
+    html_preview: FALSE
+    keep_html: TRUE
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_format = "all") })    
+---
+
+Full pipeline of DEA with Glimma - Comparing gene expression by sample type of KIRC - Kidney Renal Clear Cell Carcinoma
+
+https://www.cbioportal.org/study/summary?id=kirc_tcga_pub
+
+
+```{r, error=TRUE, message=FALSE, warning=FALSE, purl=FALSE, results='hide'}
+## This chunk automatically generates a text .R version of this script when running within knitr.
+#input  = knitr::current_input()  # filename of input document
+#output = paste(tools::file_path_sans_ext(input), 'R', sep = '.')
+#try(knitr::purl(input,output,documentation=2,quiet=T), silent = T)
+# Avoid duplicate label error of knitr::purl
+options(knitr.duplicate.label = 'allow')
+# Code to browse the markdown file with renderized images.
+knitr::opts_chunk$set(
+  fig.path = "figs/DEA_"
+)
+```
+
+
+
+# Installing and Loading Libraries            
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+packages_bioconductor = c("DESeq2", "Glimma", "limma","biomaRt", "genefilter")
+
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed from Bioconductor and loaded
+package.check <- lapply(packages_bioconductor, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    BiocManager::install(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+
+packages_cran = c("DT", "tidyverse","dplyr", "tibble", "stringr", "data.table", "genefilter", "ggrepel")
+  
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed from CRAN and loaded
+package.check <- lapply(packages_cran, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+
+rm(packages_cran, packages_bioconductor, package.check)
+```
+
+
+```{r}
+
+load("../data/kirc_count.RData")
+
+codes.type <- kirc.clini %>% 
+                filter(sample.type %in% c("NT", "TP" )) %>%   
+                rownames_to_column("samples") %>%
+                dplyr::select(samples)  %>%
+                as_vector(.)
+
+```
+
+# Running DESeq2 Differential Expression for sample.type
+
+
+```{r}
+
+# create the DESeqDataSet object
+ddsObj <- DESeqDataSetFromMatrix(countData = as.matrix(kirc.count[,codes.type]),
+                              colData = kirc.clini[codes.type,],
+                              design = as.formula(~ sample.type))
+
+ddsObj <- DESeq(ddsObj)
+res.shr <- results(ddsObj)
+#res.shr <- DESeq2::lfcShrink(ddsObj, coef=2, res=res.DESeq2, type='apeglm')
+```
+
+```{r}
+summary(res.shr)
+```
+
+```{r}
+dea.NT.TP <- as.data.frame(res.shr) %>%
+    rownames_to_column("symbol") %>% 
+    left_join(kirc.annot, by="symbol") %>% 
+    dplyr::rename(logFC=log2FoldChange, FDR=padj)
+```
+
+
+```{r}
+#load("../data/dea.NT.TP.rda")
+df.deseq <- dea.NT.TP  %>% filter(abs(logFC) >= 3, FDR < 0.01)
+dim(df.deseq)
+```
+
+
+```{r}
+genes.DEA.NT.vs.TP.lst <- unique(df.deseq$symbol)
+write(genes.DEA.NT.vs.TP.lst,  file = "genes.DEA.NT.vs.TP.lst")
+
+save(dea.NT.TP, file = "../data/dea.NT.TP.rda", compress = T)
+
+rm(df.deseq, genes.DEA.NT.vs.TP.lst)
+```
+
+
+
+```{r}
+# add a column with the names of only the top 10 genes
+cutoff <- sort(dea.NT.TP$pvalue)[10]
+shrink.deseq.cut <- dea.NT.TP %>% 
+    mutate(TopGeneLabel=ifelse(pvalue<=cutoff, symbol, ""))
+
+ggplot(shrink.deseq.cut, aes(x = log2(baseMean), y=logFC)) + 
+  geom_point(aes(colour=FDR < 0.01), pch=20, size=0.5) +
+  labs(x="log2(baseMean)", y="log Fold Change") + 
+  geom_label_repel(aes(label=TopGeneLabel), 
+                   seed = 123,
+                   max.time = 3,
+                   max.iter = Inf,
+                   size = 3,
+                   box.padding = 2, 
+                   max.overlaps = Inf)
+
+rm(shrink.deseq.cut, cutoff)
+```
+
+```{r}
+
+ ggplot(dea.NT.TP) + 
+  geom_histogram(aes(x = log2(baseMean)), bins = 10)
+
+```
+
+
+```{r}
+# add a column with the names of only the top 10 genes
+cutoff <- sort(dea.NT.TP$pvalue)[10]
+shrink.deseq.cut <- dea.NT.TP %>% 
+    mutate(TopGeneLabel=ifelse(pvalue<=cutoff, symbol, ""))
+
+ggplot(shrink.deseq.cut, aes(x = logFC, y= -log10(FDR))) + 
+  geom_point(aes(colour=FDR < 0.01), pch=20, size=2) +
+  labs(x="log Fold Change", y="-log10(FDR)") + 
+  geom_label_repel(aes(label=TopGeneLabel), 
+                   seed = 123,
+                   max.time = 3,
+                   max.iter = Inf,
+                   size = 3,
+                   box.padding = 2, 
+                   max.overlaps = Inf)
+
+rm(shrink.deseq.cut, cutoff)
+```
+
+
+<!-- ```{r} -->
+<!-- res.df <- as.data.frame(res.shr) -->
+<!-- res.df$log10MeanNormCount <- log10(res.df$baseMean + 1) -->
+<!-- idx <-(rowSums(counts(ddsObj)) > 0) -->
+<!-- res.df <- res.df[idx,] -->
+<!-- res.df$padj[is.na(res.df$padj)] <- 1 -->
+
+<!-- status <- as.numeric(res.df$padj < 0.05) -->
+
+<!-- glMDPlot(res.df[idx,], -->
+<!--          xval="baseMean", -->
+<!--          yval="log2FoldChange", -->
+<!--          counts=counts(ddsObj)[idx,], -->
+<!--          display.columns=c("GeneID"), -->
+<!--          anno=data.frame(GeneID=rownames(ddsObj)[idx]), -->
+<!--          groups = kirc.clini[codes.type, "sample.type"], -->
+<!--          side.xlab = "Group", -->
+<!--          side.ylab = "Expression (log2)",          -->
+<!--          samples = kirc.clini[codes.type, "codes"], -->
+<!--          status=status, -->
+<!--          folder = "MDPlot_KIRC.NT.vs.TP", -->
+<!--          html = "index", -->
+<!--          launch=FALSE) -->
+
+<!-- rm(res.shr, res.df, idx, status) -->
+<!-- ``` -->
+
+
+```{r}
+
+# first remove the filtered genes (FDR=NA) and create a -log10(FDR) column
+filtTab.deseq <- dea.NT.TP %>%
+    filter(FDR < 0.1) %>%  
+    filter(abs(logFC) > 1) %>% 
+    filter(!is.na(FDR)) %>%
+    mutate(`-log10(FDR)` = -log10(FDR))
+
+  filtTab.deseq <- filtTab.deseq  %>%
+    mutate(`-log10(FDR)`=pmin(`-log10(FDR)`))
+
+filtTab.deseq <- filtTab.deseq[!duplicated(filtTab.deseq$symbol), ]
+rownames(filtTab.deseq) <- filtTab.deseq$symbol  
+```
+
+
+```{r}
+
+de <- as.integer(abs(filtTab.deseq$logFC) >= 3 & filtTab.deseq$FDR <= 0.01)
+
+glXYPlot(
+  x = filtTab.deseq$logFC,
+  y = -log10(filtTab.deseq$pvalue),
+  xlab = "logFC",
+  ylab = "-log10pvalue (FDR)",
+  main = "NT.vs.TP",
+  counts = counts(ddsObj)[filtTab.deseq$symbol,],
+  groups = kirc.clini[codes.type, "sample.type"],
+  side.xlab = "Group",
+  side.ylab = "Expression (log2)",
+  samples = kirc.clini[codes.type, "codes"],
+  status = de,
+  side.main = "symbol",
+  display.columns = c("symbol", "logFC", "FDR", "ensgene", "description"),
+  anno = filtTab.deseq,
+  folder = "XYPlot_KIRC.NT.vs.TP",
+  html = "index",
+  launch = F)
+
+rm(de)
+```
+
+
+# Running DESeq2 Differential Expression for metastasis
+
+
+```{r}
+
+# load("../data/kirc_count.RData")
+
+# Selecting only samples with M0 or M1 of Primary Tumors cases:
+codes.metas <- kirc.clini %>% 
+                filter(sample.type == "TP") %>%  
+                filter(metastasis %in% c("M0", "M1")) %>%    
+                rownames_to_column("samples") %>%
+                dplyr::select(samples)  %>%
+                as_vector(.)
+
+```
+
+
+```{r}
+
+# create the DESeqDataSet object
+ddsObj <- DESeqDataSetFromMatrix(countData = as.matrix(kirc.count[,codes.metas]),
+                              colData = kirc.clini[codes.metas,],
+                              design = ~ metastasis)
+
+ddsObj <- DESeq(ddsObj)
+res.shr  <- results(ddsObj)
+#res.shr <- DESeq2::lfcShrink(ddsObj, coef=2, res=res.shr, type='apeglm')
+
+```
+
+```{r}
+summary(res.shr)
+```
+out of 53993 with nonzero total read count
+adjusted p-value < 0.1
+LFC > 0 (up)       : 4935, 9.1%
+LFC < 0 (down)     : 5723, 11%
+outliers [1]       : 0, 0%
+low counts [2]     : 13590, 25%
+(mean count < 0)
+[1] see 'cooksCutoff' argument of ?results
+[2] see 'independentFiltering' argument of ?results
+
+```{r}
+dea.M0.M1 <- as.data.frame(res.shr) %>%
+    rownames_to_column("symbol") %>% 
+    left_join(kirc.annot, by="symbol") %>% 
+    dplyr::rename(logFC=log2FoldChange, FDR=padj)
+```
+
+
+
+```{r}
+#load("../data/dea.M0.M1.rda")
+df.deseq <- dea.M0.M1  %>% filter(abs(logFC) >= 2, FDR < 0.01)
+
+df.deseq <- df.deseq[!is.na(df.deseq$logFC),]
+dim(df.deseq)
+
+
+```
+
+
+```{r}
+genes.DEA.M0.vs.M1.lst <- unique(df.deseq$symbol)
+write(genes.DEA.M0.vs.M1.lst,  file = "genes.DEA.M0.vs.M1.lst")
+
+save(dea.M0.M1, file = "../data/dea.M0.M1.rda", compress = T)
+
+rm(df.deseq, genes.DEA.M0.vs.M1.lst)
+```
+
+
+```{r}
+# add a column with the names of only the top 10 genes
+cutoff <- sort(dea.M0.M1$pvalue)[10]
+shrink.deseq.cut <- dea.M0.M1 %>% 
+    mutate(TopGeneLabel=ifelse(pvalue<=cutoff, symbol, ""))
+
+ggplot(shrink.deseq.cut, aes(x = log2(baseMean), y=logFC)) + 
+  geom_point(aes(colour=FDR < 0.01), pch=20, size=0.5) +
+  labs(x="mean of normalised counts", y="log Fold Change") + 
+  geom_label_repel(aes(label=TopGeneLabel), 
+                   seed = 123,
+                   max.time = 3,
+                   max.iter = Inf,
+                   size = 3,
+                   box.padding = 2, 
+                   max.overlaps = Inf)
+
+rm(shrink.deseq.cut, cutoff)
+```
+
+
+
+```{r}
+# add a column with the names of only the top 10 genes
+cutoff <- sort(dea.M0.M1$pvalue)[10]
+shrink.deseq.cut <- dea.M0.M1 %>% 
+    mutate(TopGeneLabel=ifelse(pvalue<=cutoff, symbol, ""))
+
+ggplot(shrink.deseq.cut, aes(x = logFC, y= -log10(FDR))) + 
+  geom_point(aes(colour=FDR < 0.01), pch=20, size=2) +
+  labs(x="log Fold Change", y="-log10(FDR)") + 
+  geom_label_repel(aes(label=TopGeneLabel), 
+                   seed = 123,
+                   max.time = 3,
+                   max.iter = Inf,
+                   size = 3,
+                   box.padding = 2, 
+                   max.overlaps = Inf)
+
+rm(shrink.deseq.cut, cutoff)
+```
+
+
+<!-- ```{r} -->
+<!-- res.df <- as.data.frame(res.shr) -->
+<!-- res.df$log10MeanNormCount <- log10(res.df$baseMean + 1) -->
+<!-- idx <-(rowSums(counts(ddsObj)) > 0) -->
+<!-- res.df <- res.df[idx,] -->
+<!-- res.df$padj[is.na(res.df$padj)] <- 1 -->
+
+<!-- status <- as.numeric(res.df$padj < .1) -->
+
+<!-- glMDPlot(res.df[idx,], -->
+<!--          xval="baseMean", -->
+<!--          yval="log2FoldChange", -->
+<!--          counts=counts(ddsObj)[idx,], -->
+<!--          display.columns=c("GeneID"), -->
+<!--          anno=data.frame(GeneID=rownames(ddsObj)[idx]), -->
+<!--          groups = kirc.clini[codes.metas, "metastasis"], -->
+<!--          side.xlab = "Group", -->
+<!--          side.ylab = "Expression (log2)", -->
+<!--          samples = kirc.clini[codes.metas, "codes"], -->
+<!--          status=status, -->
+<!--          folder = "MDPlot_KIRC.M0.vs.M1", -->
+<!--          html = "index", -->
+<!--          launch=FALSE) -->
+
+<!-- ``` -->
+
+
+
+```{r}
+
+# first remove the filtered genes (FDR=NA) and create a -log10(FDR) column
+filtTab.deseq <- dea.M0.M1 %>%
+    filter(FDR < 0.2) %>%  
+    filter(abs(logFC) > 0.5) %>% 
+    filter(!is.na(FDR)) %>%
+    mutate(`-log10(FDR)` = -log10(FDR))
+
+  filtTab.deseq <- filtTab.deseq  %>%
+    mutate(`-log10(FDR)`=pmin(`-log10(FDR)`))
+
+filtTab.deseq <- filtTab.deseq[!duplicated(filtTab.deseq$symbol), ]
+rownames(filtTab.deseq) <- filtTab.deseq$symbol  
+```
+
+
+```{r}
+
+de <- as.integer(abs(filtTab.deseq$logFC) >= 2 & filtTab.deseq$FDR <= 0.05)
+
+#idx <-(rowSums(counts(ddsObj)) > 0)
+#normCounts <- log2(counts(ddsObj))
+#filtCounts <- normCounts[filtTab.deseq$symbol,]
+
+glXYPlot(
+  x = filtTab.deseq$logFC,
+  y = -log10(filtTab.deseq$FDR),
+  xlab = "logFC",
+  ylab = "-log10pvalue(FDR)",
+  main = "M0.vs.M1",
+  counts = counts(ddsObj)[filtTab.deseq$symbol,] ,
+  groups = kirc.clini[codes.metas, "metastasis"],
+  side.xlab = "Group",
+  side.ylab = "Expression",
+  samples = kirc.clini[codes.metas, "codes"],
+  status = de,
+  side.main = "symbol",
+  display.columns = c("symbol", "logFC", "FDR", "ensgene", "description"),
+  anno = filtTab.deseq,
+  folder = "XYPlot_KIRC.M0.vs.M1",
+  html = "index",
+  launch = F)
+```
+
+

@@ -1,0 +1,386 @@
+---
+title: "Preprocessing Gene Expression of Kidney Cancer (TCGA-KIRC)"
+output:
+# pdf_document: default
+  html_document: 
+    default
+  github_document: 
+    df_print: paged
+    html_preview: FALSE
+    keep_html: TRUE
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_format = "all") })      
+---
+
+  
+```{r error=TRUE, message=FALSE, warning=FALSE, include=FALSE, purl=FALSE, results='hide'}
+## This chunk automatically generates a text .R version of this script when running within knitr.
+input  = knitr::current_input()  # filename of input document
+output = paste(tools::file_path_sans_ext(input), 'R', sep = '.')
+try(knitr::purl(input,output,documentation=2,quiet=T), silent = TRUE)
+# Avoid duplicate label error of knitr::purl
+options(knitr.duplicate.label = 'allow')
+# Code to browse the markdown file with renderized images.
+knitr::opts_chunk$set(
+  fig.path = "figs/render-"
+)
+```
+
+
+# Installing and Loading Libraries            
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#library(annotables) # BiocManager::install("annotate")
+# 
+# packages_bioconductor = c("clusterProfiler", "org.Hs.eg.db", "ReactomePA", "DOSE")
+# 
+# #use this function to check if each package is on the local machine
+# #if a package is installed, it will be loaded
+# #if any are not, the missing package(s) will be installed from Bioconductor and loaded
+# package.check <- lapply(packages_bioconductor, FUN = function(x) {
+#   if (!require(x, character.only = TRUE)) {
+#     BiocManager::install(x, dependencies = TRUE)
+#     library(x, character.only = TRUE)
+#   }
+# })
+
+# install.packages("mlr3extralearners")
+packages_cran = c("tidyverse", "bestNormalize", "mlr3", "mlr3verse", "mlr3proba", "mlr3extralearners",  "survival", "mRMRe", "xgboost", "glmnet", "gbm")
+  
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed from CRAN and loaded
+package.check <- lapply(packages_cran, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+
+library(annotables)
+
+library(tictoc) # devtools::install_github("collectivemedia/tictoc")
+
+rm(packages_cran, packages_bioconductor, package.check)
+
+```
+
+# Selecting genes for TCGA-KIRC
+
+```{r}
+load("../data/kirc_count.RData")
+kirc.annot$symbol.dot <-  gsub("-", ".", kirc.annot$symbol, fixed = T)
+rownames(kirc.count)  <-  gsub("-", ".", rownames(kirc.count), fixed = T)
+rownames(kirc.count)  <-  gsub("//", ".", rownames(kirc.count), fixed = T)
+rownames(kirc.count)  <-  gsub("/", ".", rownames(kirc.count), fixed = T)
+
+# Select genes ----
+genes_DEA_M0 <- readLines("../2_gene_expression_differentiation/genes.DEA.M0.vs.M1.lst")
+genes_DEA_NT <- readLines("../2_gene_expression_differentiation/genes.DEA.NT.vs.TP.lst")
+genes_risk <- readLines("../3_gene_mutational_survival/genes_mutated.highrisk.lst")
+
+genes_eqtls <- read_tsv("../data/Kidney_Cortex.v8.independent_eqtls.txt")
+genes_eqtls <- genes_eqtls %>%
+  dplyr::filter(rank == 1) %>%
+  dplyr::select(gene_id) %>%
+  as_vector(.) %>%
+  sub("\\..*", "", .) 
+
+genes_eqtls <- grch38 %>%
+  dplyr::filter(grch38$ensgene %in%  genes_eqtls) %>%
+  dplyr::select(symbol) %>%
+  as_vector(.)
+
+writeLines(unique(genes_eqtls),"../data/genes_kidney_cortex_eqtls.lst")
+
+gsign_kidney <- read_delim("../data/genes_signatures_papers_kidney.csv", quote = "\"", "\t", escape_double = FALSE, trim_ws = TRUE)
+gsign_kidney <- as.data.frame(gsign_kidney)
+gsign_kidney$signature <- str_split(gsign_kidney$signature,",")
+gsign_kidney$id <- paste0("sign.",row.names(gsign_kidney))
+rownames(gsign_kidney) <- gsign_kidney$id
+genes_papers <- unlist(gsign_kidney$signature)
+genes_selection <-  union(union(union(union(genes_DEA_M0, genes_DEA_NT), genes_risk), genes_papers), genes_eqtls)
+
+
+# Checking missing genes ----
+gene_missing <- union(setdiff(genes_papers, kirc.annot$symbol.dot), setdiff(genes_risk, kirc.annot$symbol.dot))
+
+# gene_missing on genes_papers
+#  [1] "C10orf4"      "C17orf79"     "NCRNA00116"   "ODZ3"         "Hsa-mir-374a" "ERVFRDE1"     "FAM123A"      "VEGFR1"      
+#  [9] "VEGFR2"       "VEGFR3"       "HIF2A"        "PD-L1"        "IFN-G"        "PD1"          "PD-L2"        "TIM3"        
+# [17] "CNN1G"        "EXOC3L2"      "FYB"          "ADRBK1"       "FAM178A"      "BAT2"  
+# gene_missing on genes_risk
+# "FAM178A"      "BAT2"  
+# C10orf4 FRA10AC1 ENSG00000148690
+# C17orf79 COPRS ENSG00000172301
+# NCRNA00116 MTLN LINC00116 ENSG00000172301
+# ODZ3 TENM1 ENSG00000009694
+# Hsa-mir-374a MIR374A ENSG00000199168
+
+#install.packages("GeneBook")
+library("GeneBook")
+
+#gene_missing0 <- gene_missing
+
+##  Multiple Gene ID Convert
+#gene_missing <- gsub(".", "-", gene_missing, fixed = T)
+
+gene_missing <- as.matrix(gene_missing)
+
+mat_id_convert = c()
+
+for(i in 1:nrow(gene_missing)){
+  out <- GeneCard_ID_Convert(gene_missing[i])
+  mat_id_convert  <- rbind(mat_id_convert,out)
+}
+
+gene_missing <- cbind(gene_missing, mat_id_convert)
+rm(i, mat_id_convert, out)
+
+colnames(gene_missing) <- c("previous_ID","Symbol","Label")
+gene_missing <- data.frame(gene_missing)
+gene_missing$Symbol <- gsub("C10orf4", "FRA10AC1", gene_missing$Symbol)
+gene_missing$Symbol <- gsub("C17orf79", "COPRS", gene_missing$Symbol)
+gene_missing$Symbol <- gsub("CNN1G", "CNN1", gene_missing$Symbol)
+gene_missing$Symbol <- gsub("SMIM37", "LINC00116", gene_missing$Symbol)
+rownames(gene_missing) <- gene_missing$previous_ID
+
+# EXOC3L2 ENSG00000283632 - ?
+#        previous_ID   Symbol             Label
+# out           MTLN     MTLN           Missing
+# out.1     ERVFRDE1 ERVFRD-1             Trust
+# out.2      FAM123A    AMER2     Predict Trust
+# out.3       VEGFR1     FLT1             Trust
+# out.4       VEGFR2      KDR     Predict Trust
+# out.5       VEGFR3     FLT4             Trust
+# out.6        HIF2A    EPAS1             Trust
+# out.7        PD-L1    CD274             Trust
+# out.8        IFN-G     IFNG     Predict Trust
+# X              PD1    PDCD1 Predict Suspicion
+# out.9        PD-L2 PDCD1LG2             Trust
+# out.10        TIM3   HAVCR2             Trust
+# out.11     EXOC3L2  EXOC3L2             Trust
+# out.12         FYB     FYB1     Predict Trust
+# out.13      ADRBK1     GRK2             Trust
+
+g2subs <- intersect(gene_missing$previous_ID, genes_risk)
+genes_risk <- union(setdiff(genes_risk, g2subs), gene_missing[g2subs, "Symbol"])
+write(genes_risk,  file = "../3_gene_mutational_survival/genes_mutated.highrisk.lst")
+
+g2subs <- intersect(gene_missing$previous_ID, genes_papers)
+genes_papers <- union(setdiff(genes_papers, g2subs), gene_missing[g2subs, "Symbol"])
+write(genes_papers,  file = "../data/genes_papers.lst")
+
+setdiff(gene_missing$Symbol, kirc.annot$symbol)
+
+rm(g2subs)
+
+rm(gene_missing, genes_DEA_M0, genes_DEA_NT, genes_risk, genes_papers, genes_eqtls)
+
+```
+
+#  Select TCGA-KIRC count and Combine data to clinical data  
+
+```{r}
+
+kirc.data <- data.frame(t(kirc.count[rownames(kirc.count) %in% genes_selection,]))
+kirc.data <- kirc.data[kirc.clini[kirc.clini$sample.type == "TP","codes"],]
+kirc.data <- cbind(kirc.clini[rownames(kirc.data),  c("obs.time", "status", "age", "gender", "prior.dx")], kirc.data )
+
+kirc.data$obs.time <- round(kirc.data$obs.time, digits = 0)
+kirc.data$status <- as.numeric(kirc.data$status)
+kirc.data$age <- as.numeric(kirc.data$age)
+kirc.data$gender <- as.numeric(kirc.data$gender)-1
+kirc.data$prior.dx <- as.numeric(kirc.data$prior.dx)-1
+kirc.data <- kirc.data[data$obs.time > 0,]
+ 
+save(kirc.data, file = "../data/1.data.count.rda", compress = T)
+```
+
+
+# Loading clinical data of ICGC Data Portal
+
+```{r}
+
+# donor data
+#url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/donor.RECA-EU.tsv.gz"
+#destfile <- "../data/icgc_reca_donor.tsv.gz"
+#download.file(url, destfile)
+icgc.donor <- read_tsv(gzfile("../data/icgc_reca_donor.tsv.gz"))
+
+icgc.donor <- icgc.donor %>%
+  dplyr::select(c("icgc_donor_id", "submitted_donor_id", "donor_survival_time", "donor_vital_status", "donor_age_at_diagnosis", "donor_sex",  "donor_tumour_stage_at_diagnosis" )) %>% 
+  dplyr::rename(code = 'icgc_donor_id', 
+         obs.time = 'donor_survival_time',
+         status = 'donor_vital_status',
+         age = 'donor_age_at_diagnosis', 
+         gender = 'donor_sex')
+
+icgc.donor$metastasis <- substr(icgc.donor$donor_tumour_stage_at_diagnosis, 5, 6)
+icgc.donor$neoplasm <- substr(icgc.donor$donor_tumour_stage_at_diagnosis, 3, 4)
+icgc.donor$ajcc.stage <- substr(icgc.donor$donor_tumour_stage_at_diagnosis, 1, 2)
+icgc.donor$donor_tumour_stage_at_diagnosis <- NULL 
+icgc.donor <- as.data.frame(icgc.donor)
+rownames(icgc.donor) <- icgc.donor$code
+
+# specimen.RECA data
+#url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/specimen.RECA-EU.tsv.gz"
+#destfile <- "../data/icgc_reca_specimen.tsv.gz"
+#download.file(url, destfile)
+icgc.specimen <- read_tsv(gzfile("../data/icgc_reca_specimen.tsv.gz"))
+
+icgc.specimen <- icgc.specimen %>%
+    dplyr::select(c("icgc_specimen_id", "icgc_donor_id", "submitted_specimen_id", "specimen_type"))
+
+#icgc.clinical <- icgc.donor[colnames(),]
+# # sample.RECA data
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/sample.RECA-EU.tsv.gz"
+# destfile <- "../data/icgc_reca_sample.tsv.gz"
+# download.file(url, destfile)
+icgc.sample <- read_tsv(gzfile("../data/icgc_reca_sample.tsv.gz"))
+
+# url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/simple_somatic_mutation.open.RECA-EU.tsv.gz"
+# destfile <- "../data/icgc_reca_mutation.tsv.gz"
+# download.file(url, destfile)
+# icgc.mutation <- read_tsv(gzfile("../data/icgc_reca_mutation.tsv.gz"))
+
+```
+
+# Loading expression data
+
+```{r}
+#url <- "https://dcc.icgc.org/api/v1/download?fn=/current/Projects/RECA-EU/exp_seq.RECA-EU.tsv.gz"
+#destfile <- "../data/icgc_reca_counts.tsv.gz"
+#download.file(url, destfile)
+icgc.count <- read_tsv(gzfile("../data/icgc_reca_counts.tsv.gz"))
+
+# icgc.count$submitted_sample_id 
+# RT Primary tumour - solid tissue
+# RA Normal - tissue adjacent to primary
+# N Normal - blood derived
+# > sum(grepl("A$", unique(icgc.count$submitted_sample_id)))
+# [1] 45
+# > sum(!grepl("A$", unique(icgc.count$submitted_sample_id)))
+# [1] 91
+# Selecting only RT Primary tumour
+# GRCh37 
+
+icgc.count <- icgc.count %>% 
+  dplyr::filter(!grepl("A$", submitted_sample_id)) %>%  
+  dplyr::select(c("submitted_sample_id", "gene_id", "raw_read_count" )) %>% 
+  pivot_wider(names_from = "submitted_sample_id", values_from = "raw_read_count" )
+
+```
+
+# Select anotation dataset and converting gene signatures to ICGC grch37 dataset
+
+
+```{r}
+library(annotables)
+
+icgc.annot <- grch37 %>%
+  dplyr::filter(grch37$ensgene %in%  icgc.count$gene_id) %>%
+  dplyr::select(ensgene, symbol, description)
+
+icgc.annot$symbol.dot <- gsub("-", ".", icgc.annot$symbol, fixed = T)
+kirc.annot$symbol.dot <- gsub("-", ".", kirc.annot$symbol, fixed = T)
+
+genes_signatures <- union(setdiff(unlist(gsign_kidney$signature), c("obs.time", "status", "age", "gender", "prior.dx")), setdiff(colnames(kirc.data), c("obs.time", "status", "age", "gender", "prior.dx")))
+
+kirc.annot.data <- kirc.annot %>%
+  dplyr::filter(symbol.dot %in% genes_signatures) %>%
+  unique(.) %>%
+  as.data.frame(.)
+
+icgc.annot.data <- icgc.annot %>%
+#    dplyr::filter(ensgene %in% kirc.annot.data$ensgene) %>%
+  dplyr::filter(symbol.dot %in% genes_signatures | ensgene %in% kirc.annot.data$ensgene) %>% # Getting genenames or same ensembl
+  unique(.) %>%
+  as.data.frame(.)
+
+icgc.annot.data <- full_join(icgc.annot.data, kirc.annot.data, by = "ensgene") %>%
+  dplyr::filter(ensgene %in%  icgc.count$gene_id)  %>%
+  unique(.) %>%
+  as.data.frame(.)
+
+icgc.annot.data$symbol.dot.y[is.na(icgc.annot.data$symbol.dot.y)] <- icgc.annot.data$symbol.dot.x[is.na(icgc.annot.data$symbol.dot.y)]
+rownames(icgc.annot.data) <- icgc.annot.data$ensgene
+
+icgc.data <- icgc.count %>%
+  dplyr::filter(gene_id %in% icgc.annot.data$ensgene) %>%
+  mutate(gene_id = icgc.annot.data[gene_id, "symbol.dot.y"]) %>%
+  distinct(gene_id, .keep_all = TRUE) %>%
+  column_to_rownames("gene_id")  %>%
+  t(.) %>%
+  as.data.frame(.)
+
+rownames(icgc.data) <- gsub("RT", "", rownames(icgc.data))
+
+# 40 unmatching genes before
+# Excluding 349 unmatched genes form 3380 gene selection
+
+#gene.missing <- setdiff(unique(unlist(gsign_kidney$signature)), colnames(icgc.data))
+gene.missing <- setdiff(setdiff(colnames(kirc.data),  c("obs.time", "status", "age", "gender", "prior.dx")), colnames(icgc.data))
+
+#cols <- setdiff(intersect(intersect(unlist(gsign_kidney$signature), colnames(icgc.data)), colnames(kirc.data)),  c("obs.time", "status", "age", "gender", "prior.dx")
+
+cols <- intersect(colnames(icgc.data), colnames(kirc.data))
+
+kirc.data.count <- as.data.frame(kirc.data[,cols])
+icgc.data.count <- as.data.frame(icgc.data[,cols])
+
+# Full data with same genes colnames
+cols <- intersect(colnames(kirc.data.count), colnames(icgc.data.count))
+
+full.data <- rbind(kirc.data.count[, cols], icgc.data.count[, cols])
+
+icgc.clinical <- icgc.donor %>%
+  dplyr::filter(submitted_donor_id %in% rownames(full.data) ) %>%
+  dplyr::select(c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage")) %>%
+  mutate(status = case_when(status=="deceased" ~ 1,
+                            status=="alive" ~ 0))
+
+kirc.clinical <- kirc.clini %>%
+  dplyr::filter(codes %in% rownames(full.data) ) %>%
+  dplyr::select(c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage"))
+
+
+full.clinical <- rbind(kirc.clinical, icgc.clinical)
+full.clinical$gender <-  ifelse(full.clinical$gender=="male", 1, 0)
+full.clinical$ajcc.stage <- substr(full.clinical$ajcc.stage, 1, 2)
+full.clinical$dataset <- ifelse(substr(rownames(full.clinical),1,4) =="TCGA","TCGA", "ICGC")
+
+full.data <- cbind(full.clinical, full.data)
+
+save(full.data, file="../data/2.data.full.count.rda")
+save(gsign_kidney, file = "../data/1.gsign_kidney.processed.rda")
+rm(list=setdiff(ls(), c("full.data","gsign_kidney")))
+```
+
+# Normalization with BoxCox
+
+```{r}
+
+load("../data/2.data.full.count.rda")
+
+col_clini <- c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage", "dataset")
+col_genes <- setdiff(colnames(data), col_clini)
+#To avoid inf exp on log-normalization
+full.data[, col_genes] <- full.data[, col_genes] + 1
+
+data <- full.data
+
+# calculate the pre-process parameters from the dataset
+preprocessParams <- caret::preProcess(full.data[full.data$dataset == "TCGA",col_genes], method=c("BoxCox"), fudge=1)
+
+# transform the dataset using the parameters
+data[data$dataset == "TCGA",col_genes] <- predict(preprocessParams, full.data[full.data$dataset == "TCGA",col_genes])
+data[data$dataset == "ICGC",col_genes] <- predict(preprocessParams, full.data[full.data$dataset == "ICGC", col_genes])
+
+rm(list=setdiff(ls(), c("data", "gsign_kidney")))
+save(data, file = "../data/1.data.processed.rda")
+
+```
+

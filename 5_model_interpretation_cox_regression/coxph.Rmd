@@ -1,0 +1,288 @@
+---
+title: "Cox Proportional Hazards"
+output:
+# pdf_document: default
+#  html_document: 
+#    default
+  github_document: 
+    df_print: paged
+    html_preview: FALSE
+    keep_html: FALSE
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_format = "all") })  
+---
+
+  
+```{r error=TRUE, message=FALSE, warning=FALSE, include=FALSE, purl=FALSE, results='hide'}
+## This chunk automatically generates a text .R version of this script when running within knitr.
+#input  = knitr::current_input()  # filename of input document
+#output = paste(tools::file_path_sans_ext(input), 'R', sep = '.')
+#try(knitr::purl(input,output,documentation=2,quiet=T), silent = TRUE)
+# Avoid duplicate label error of knitr::purl
+options(knitr.duplicate.label = 'allow')
+# Code to browse the markdown file with renderized images.
+knitr::opts_chunk$set(
+  fig.path = "figs/KIRC_coxph_"
+)
+```
+
+```{r}
+library(survival)
+library(survminer)
+library(dplyr)
+library(finalfit) # install.packages("finalfit")
+
+```
+
+
+```{r}
+
+load(file = "../data/2.gsign_kidney.rda")
+load(file = "../data/surv/3.data.benchmark_tcgadata_3cv.rda") # job_benchmark_grid.R
+
+gsign_kidney <- gsign_kidney %>%
+  dplyr::filter(!id %in% c("sign.3", "sign.4",  "sign.11", "sign.13", "sign.14", "fs.genetic", "fs.mRMR.status", "fs.mRMR.time")) %>%
+  mutate(id =  fct_recode(id,
+    Ha.2015.CaInfo = "sign.1",
+    Zhan.2015.CMMM = "sign.2",
+    Dai.2016.Oncotarget = "sign.5",
+    Wan.2017.IJCancer = "sign.6",
+    Chang.2018.Medicine = "sign.7",
+    YuanLeiChen.2018.JCP = "sign.8",
+    Hu.2019.IJMS = "sign.9",
+    LiangChen.2018.JCP = "sign.10",
+    #Pan.2019.MSM.5genes = "sign.11", # removed
+    Pan.2019.MSM = "sign.12",
+    Wu.2019.FrontiersOnco = "sign.15",
+    Jiang.2020.ACS = "sign.16",
+    Zou.2020.PeerJ = "sign.17",
+    LingChen.2020.Hereditas = "sign.18",
+    DCosta.2020.SciReports = "sign.19",
+    wrap.boruta = "fs.boruta",
+    wrap.rfe = "fs.mlr.rfe",
+    wrap.mRMR = "fs.mRMR"))
+
+rownames(gsign_kidney) <- gsign_kidney$id
+
+```
+
+
+
+```{r}
+#rm(list=setdiff(ls(), "gsign_kidney"))
+
+load("../data/1.data.processed.rda")
+
+data.filt <- data[data$obs.time > 20 & data$obs.time < 2555, ]
+data_tcga <- data[data$dataset =="TCGA", ]
+data_icgc <- data[data$dataset =="ICGC", ]
+data_icgc.filt <- data.filt[data.filt$dataset =="ICGC", ]
+```
+
+
+```{r}
+
+covariates <- setdiff(unique(colnames(data)), c("obs.time", "status", "age", "gender", "neoplasm", "metastasis",
+                                                "ajcc.stage", "dataset"))
+
+univ_formulas <- sapply(covariates,
+                        function(x) as.formula(paste('Surv(obs.time, status)~', x)))
+                        
+univ_models <- lapply( univ_formulas, function(x){coxph(x, data = data)})
+# Extract data 
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                          x <- summary(x)
+                          p.value<-signif(x$wald["pvalue"], digits=2)
+                          wald.test<-signif(x$wald["test"], digits=2)
+                          beta<-signif(x$coef[1], digits=2);#coeficient beta
+                          HR <-signif(x$coef[2], digits=2);#exp(beta)
+                          HR.confint.lower <- signif(x$conf.int[,"lower .95"], 2)
+                          HR.confint.upper <- signif(x$conf.int[,"upper .95"],2)
+                          HR <- paste0(HR, " (", 
+                                       HR.confint.lower, "-", HR.confint.upper, ")")
+                          res<-c(beta, HR, wald.test, p.value)
+                          names(res)<-c("beta", "HR (95% CI for HR)", "wald.test", 
+                                        "p.value")
+                          return(res)
+                          #return(exp(cbind(coef(x),confint(x))))
+                         })
+res <- t(as.data.frame(univ_results, check.names = FALSE))
+res <- as.data.frame(res)
+res$p.value <- as.numeric(as.character(res$p.value))
+res <- res[!is.na(res$p.value), ]
+res <- res[res$p.value < 0.05, ] 
+
+save(res, file = "../data/genes.significatives.rda")
+
+head(res, 10) %>% 
+  knitr::kable(.)
+```
+
+
+```{r}
+
+gsign_kidney$genes.sign <- 0
+gsign_kidney$genes.prop <- ""
+
+for(i in c(1:nrow(gsign_kidney))){
+  sign <- gsign_kidney[i, "signature"][[1]]
+  gsign_kidney$genes.sign[i] <- round(length(intersect(sign, rownames(res))) / length(sign), digits = 3)
+  gsign_kidney$genes.prop[i] <- paste0(length(intersect(sign, rownames(res))), "/", length(sign))
+}
+
+knitr::kable(gsign_kidney[,c("id", "genes.sign", "genes.prop")], align = c("c","c","c") )
+```
+
+
+```{r}
+# Crosstable 
+explanatory = gsign_kidney["wrap.mRMR", "signature"][[1]]
+dependent_os = "Surv(obs.time, status)"
+
+data %>%
+  finalfit(dependent_os, explanatory, metrics=TRUE) -> t
+
+knitr::kable(t[[1]], row.names=FALSE, align=c("l", "l", "r", "r", "r", "r"))
+knitr::kable(t[[2]], row.names=FALSE, col.names="")
+```
+
+  
+# Hazard ratio plot
+
+```{r}
+explanatory = gsign_kidney["wrap.mRMR", "signature"][[1]]
+
+pdf(file = "../plots/table_coxph_mRMR.pdf", width = 12, height = 15)
+data %>%
+  hr_plot(dependent_os, explanatory) 
+dev.off()
+
+
+
+
+```
+
+
+```{r }
+
+sign <- gsign_kidney["wrap.mRMR", "signature"][[1]]
+surv_obj <- Surv(time = data$obs.time, event = data$status)
+
+fit.coxph <- coxph(as.formula(paste0("surv_obj ~ ", paste(sign, collapse= " + "))), data)
+
+#fit.coxph <- coxph(Surv(time = obs.time, event = status) ~ LINC00845 + AC105384.2 + AL133325.3 + HAMP + CNPY1 + ISPD + Z99289.2 + AC006065.4 + CDC42P2 + OTOF + LIMCH1 + BCL3 + CHAT + AL356277.2 + IL4 + DLX4 + AR + TROAP + age, data)
+
+fit.coxph
+
+ggforest(fit.coxph, data = data, fontsize = 1) + 
+  ggsave("../plots/coxph_wrap.mRMR.pdf", width = 12, height = 21, units = c("in"))
+
+
+ggcoxdiagnostics(fit.coxph, 
+                 type = "deviance",
+                 ox.scale = "linear.predictions")
+
+
+ggcoxdiagnostics(fit.coxph, 
+                 type = "schoenfeld", 
+                 ox.scale = "observation.id")
+                 
+                 
+```
+
+HAMP        2.30287  10.00287  0.85103  2.706  0.00681
+AC006065.4  1.39071   4.01771  0.69732  1.994  0.04611
+AL356277.2  1.34476   3.83728  0.47366  2.839  0.00452
+IL4         1.24166   3.46134  0.45224  2.746  0.00604
+AR         -1.74100   0.17535  0.77693 -2.241  0.02503
+TROAP       2.56742  13.03214  0.99460  2.581  0.00984
+age         0.02919   1.02963  0.00727  4.016 5.93e-05
+
+
+VSX1        0.164045  1.178267  0.065922  2.488 0.012829
+age         0.027223  1.027597  0.007624  3.571 0.000356
+AL353637.1 -0.202358  0.816802  0.093645 -2.161 0.030702
+LIMCH1     -0.325673  0.722041  0.144557 -2.253 0.024265
+
+```{r}
+
+explanatory <- c("AR", "AL353637.1", "DPP6", "FOXJ1", "GNB3", "HHLA2", "IL4", "LIMCH1", "LINC01732", "OTX1", "SAA1", "SEMA3G", "ZIC2")
+
+dependent_os = "Surv(obs.time, status)"
+
+pdf(file = "../plots/fig_supl_5_coxph_mRMR.pdf", width = 13, height = 3)
+data %>%
+  hr_plot(dependent_os, explanatory) 
+dev.off()
+```
+
+
+
+```{r height=14, width=5}
+
+explanatory <-c("AR", "AL353637.1", "DPP6", "FOXJ1", "GNB3", "HHLA2", "IL4", "LIMCH1", "LINC01732", "OTX1", "SAA1", "SEMA3G", "ZIC2")
+
+surv_obj <- Surv(time = data$obs.time, event = data$status)
+
+# Fit a Cox proportional hazards model  
+fit.coxph <- coxph(as.formula(paste0("surv_obj ~ ", paste(explanatory, collapse= " + "))), data)
+fit.coxph
+
+pdf(file = "../plots/fig_supl_5_coxph_mRMR.pdf", width = 13, height = 6, onefile=FALSE)
+ggforest(fit.coxph, data = data[,c("obs.time", "status", explanatory)], fontsize = 1)  
+dev.off()
+```
+
+
+[1] "Ha.2014.CaInfo"
+ [1] "ETV5"    "ERCC5"   "TFG"     "FLT3"    "DDB2"    "RUNX1"   "ASPSCR1"
+ [8] "PLAG1"   "HLF"     "CDKN2C"  "VHL"     "KTN1"   
+[1] "Zhan.2015.CMMM"
+[1] "CKAP4"   "ISPD"    "OTOF"    "SLC40A1"
+[1] "Dai.2016.Oncotarget"
+[1] "PIK3C2A" "ITPA"    "BCL3"   
+[1] "Wan.2017.IJCancer"
+[1] "FRA10AC1" "ISL2"     "KISS1"    "PPP1R1A"  "SQSTM1"  
+[1] "Chang.2018.Medicine"
+[1] "INTS8"    "GTPBP2"   "SLC16A12" "LIMCH1"  
+[1] "YuanLeiChen.2018.JCP"
+[1] "BIRC5" "TF"   
+[1] "Hu.2019.IJMS"
+[1] "CCNF"   "DLX4"   "FAM72D" "PYCR1" 
+[1] "LiangChen.2018.JCP"
+[1] "CENPW" "NUF2" 
+[1] "Pan.2019.MSM"
+[1] "OTX1"   "KRT6A"  "ANXA8"  "ANKFN1" "NFE4"  
+[1] "Wu.2019.FrontiersOnco"
+[1] "ATP6V1C2" "ANK3"    
+[1] "Jiang.2020.ACS"
+[1] "SLC16A12" "ZIC2"    
+[1] "Zou.2020.PeerJ"
+[1] "SEMA3G" "AR"     "IL20RB" "CCL7"   "KLRC2"  "FGF17"  "IL4"  
+[1] "LingChen.2020.Hereditas"
+[1] "G6PC"   "CNN1"   "TIMP1"  "TUBB2B"
+
+[1] "DCosta.2020.SciReports"
+[1] "PTPRB"  "NFATC1" "PDE2A"  "FASLG"  "CD7"    "LCP1"  
+
+[1] "filt.gbm"
+ [1] "LINC00973"  "IGFN1"      "age"        "C14orf37"   "HOTTIP"    
+ [6] "IL4"        "FER1L4"     "AL034399.1" "LINC00475"  "ADAMTS14"  
+[11] "DPP6"      
+
+[1] "filt.rpart"
+[1] "LINC00973"  "MERTK"      "AL353637.1" "AC138393.1"
+[1] "filt.xgboost"
+[1] "LINC00973"  "LINC01271"  "AL355796.1" "C14orf37"   "BIRC7"     
+[6] "LINC01529"  "BCL3"       "LINP1"     
+[1] "wrap.boruta"
+[1] "BARX1"  "age"    "SEMA3G" "IGFN1"  "KLRC2" 
+[1] "wrap.rfe"
+ [1] "AC093520.1" "BARX1"      "IGFN1"      "IL20RB"     "KLRC2"     
+ [6] "LINC01700"  "NFE4"       "NUF2"       "PAEP"       "PGLYRP2"   
+[11] "PTPRB"      "SAA4"       "TROAP"      "age"       
+
+[1] "wrap.mRMR"
+[1] "AL138830.2" "HHLA2"      "FOXJ1"      "DPP6"       "MICG"      
+[6] "VSX1"       "age"        "AL353637.1" "LIMCH1"  

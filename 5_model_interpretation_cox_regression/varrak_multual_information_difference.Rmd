@@ -1,0 +1,198 @@
+---
+title: "mRMR scores"
+output: html_notebook
+---
+ 
+
+```{r}
+
+if(!require("mRMRe")){BiocManager::install("mRMRe")}
+
+if(!require("survival")){BiocManager::install("survival")}
+
+if(!require("varrank")){BiocManager::install("varrank")}
+```
+
+```{r}
+load("../data/1.data.processed.rda")
+load("../data/1.gsign_kidney.processed.rda")
+```
+
+
+```{r}
+list_mRMR_basic <- c("HHLA2", "FOXJ1", "DPP6", "LIMCH1", "SAA1", "ZIC2", "IL4", "OTX1", "AL353637.1", "GNB3")
+
+varrank_df <- data[, c("ajcc.stage", list_mRMR_basic)]
+
+varrank <- varrank(data.df = varrank_df, 
+                   method = "estevez", 
+                   #method = "peng",
+                   variable.important = "ajcc.stage", 
+                   #variable.important = "status", 
+                   discretization.method = "sturges", 
+                   n.var = 10,
+                   algorithm = "forward", 
+                   scheme="mid", 
+                   verbose = FALSE)
+
+#summary(varrank)
+pdf("../plots/fig_varrank_mrmr.pdf", width = 7, height = 6)
+plot(x = varrank, colsep = F, rowsep = F,cellnote = F, labelscex =1)
+dev.off()
+```
+
+```{r}
+
+list_mRMR_basic <- c("HHLA2", "FOXJ1", "DPP6", "LIMCH1", "SAA1", "ZIC2", "IL4", "OTX1", "AL353637.1", "GNB3")
+
+varrank_df <- data[data$dataset == "TCGA", c("status", list_mRMR_basic)]   
+#varrank_df$surv <- Surv(data$obs.time[data$dataset == "TCGA"], data$status[data$dataset == "TCGA"])
+
+varrank <- varrank(data.df = varrank_df, 
+                   method = "estevez", 
+                   #method = "peng",
+                   #variable.important = "ajcc.stage", 
+                   variable.important = "status", 
+                   discretization.method = "sturges", 
+                   n.var = 10,
+                   algorithm = "forward", 
+                   scheme="mid", 
+                   verbose = FALSE)
+
+#summary(varrank)
+
+plot(x = varrank, colsep = T, rowsep = T, cellnote = F)
+
+```
+
+
+
+```{r}
+
+feature_names <-  c("CLEC18C", "AL121987.1", "MT1G", "MYADML2", "OPN4", "NFE4", "CASR", "AL138830.2", "AL391095.1", "ANXA8", "TPSD1", "AL357507.1", "ORM2", "LINC00865", "AC106047.1", "IDO1", "NR0B1", "CRH", "GNB3", "HHLA2", "FOXJ1", "GOLGA6L9", "DACH2", "LINC01732", "FLG", "LINC00896", "LINC01956", "EEF1DP5", "IGFN1", "DPP6", "HRH2", "SULT4A1", "AC078950.1", "AP000697.1", "PLG", "KLRC2", "KISS1", "C3orf85", "SAA1", "LINC00973", "MICG", "HOTAIRM1", "SEMA3G", "VSX1", "LINC01436", "ANKRD33", "AC002451.1", "CHAT", "AC093001.1",  "age", "ZIC2", "SLC16A12", "AR", "AL353637.1", "AC008663.1", "AC105384.2", "TNNT1", "AL355796.1", "BECN2", "AC091812.1", "IL4", "OTX1", "LINC00524", "WFDC3", "LIMCH1")
+
+cols <- setdiff(colnames(data), c("neoplasm", "metastasis", "ajcc.stage", "dataset"))
+
+dd <- data[,cols]       
+
+#dd$surv <- Surv(data$obs.time, data$status)
+#dd <- dd[, c("surv", setdiff(colnames(dd),"surv"))]
+dd <- mRMR.data(data = dd)
+
+set.seed(1)
+fs <- mRMR.ensemble(data = dd, target_indices = c(1,2), feature_count = 20, solution_count = 10)
+list <- unique(unlist(solutions(fs)))
+list <- setdiff(list, c(1,2))
+list_mRMR <- featureNames(dd)[list]
+
+df_score <- as.data.frame(matrix(ncol = 4, nrow = 100))
+names(df_score) <- c("gene_time", "score_time", "gene_status", "score_status")
+df_score$gene_time <- dd@feature_names[fs@filters[["1"]]]
+df_score$gene_status <- dd@feature_names[fs@filters[["2"]]]
+df_score$score_time  <- as.vector(scores(fs)[[1]])
+df_score$score_status  <- as.vector(scores(fs)[[2]])
+```
+
+```{r}
+
+df_score_union <- as.data.frame(matrix(ncol = 5, nrow = 67))
+names(df_score_union) <- c("gene", "score_time", "score_status", "count1", "count2")
+df_score_union$gene <-  union(df_score$gene_status, df_score$gene_time)
+row.names(df_score_union) <- df_score_union$gene
+
+df_score_union[names(table(df_score$gene_status)), "count1"] <- table(df_score$gene_status)
+
+df_score_union[names(table(df_score$gene_time)), "count2"] <- table(df_score$gene_time)
+
+```
+
+# Filtering with TCGA
+
+
+```{r}
+
+cols <- setdiff(colnames(data), c("metastasis", "neoplasm", "ajcc.stage", "dataset"))
+
+dd_TCGA <- data[data$dataset == "TCGA",cols]       
+
+#dd$surv <- Surv(data$obs.time, data$status)
+#dd <- dd[, c("surv", setdiff(colnames(dd),"surv"))]
+#dd_TCGA <- dd_TCGA[, c("metastasis", setdiff(colnames(dd_TCGA),"metastasis"))]
+#dd_TCGA$metastasis <- as.numeric(dd_TCGA$metastasis)
+dd_TCGA <- mRMR.data(data = dd_TCGA)
+
+set.seed(1)
+fs <- mRMR.ensemble(data = dd_TCGA, target_indices = c(1,2), feature_count = 30, solution_count = 10)
+list <- unique(unlist(solutions(fs)))
+list <- setdiff(list, c(1,2))
+list_mRMR <- featureNames(dd_TCGA)[list]
+
+writeLines(list_mRMR, "list_mRMR.txt")
+
+df_score <- as.data.frame(matrix(ncol = 4, nrow = 300))
+names(df_score) <- c("gene_time", "score_time", "gene_status", "score_status")
+df_score$gene_time <- dd_TCGA@feature_names[fs@filters[["1"]]]
+df_score$gene_status <- dd_TCGA@feature_names[fs@filters[["2"]]]
+df_score$score_time  <- as.vector(scores(fs)[[1]])
+df_score$score_status  <- as.vector(scores(fs)[[2]])
+```
+
+```{r}
+
+df_score_union <- as.data.frame(matrix(ncol = 5, nrow = 67))
+names(df_score_union) <- c("gene", "score_time", "score_status", "count1", "count2")
+df_score_union$gene <-  union(df_score$gene_status, df_score$gene_time)
+row.names(df_score_union) <- df_score_union$gene
+
+df_score_union[names(table(df_score$gene_status)), "count1"] <- table(df_score$gene_status)
+
+df_score_union[names(table(df_score$gene_time)), "count2"] <- table(df_score$gene_time)
+
+```
+
+
+
+# Filtering with TCGA Survival
+
+
+```{r}
+
+cols <- setdiff(colnames(data), c("obs.time", "status", "metastasis", "neoplasm", "ajcc.stage", "dataset"))
+
+dd_TCGA_surv <- data[data$dataset == "TCGA",cols]       
+
+dd_TCGA_surv$surv <- Surv(data$obs.time[data$dataset == "TCGA"], data$status[data$dataset == "TCGA"])
+dd_TCGA_surv <- dd_TCGA_surv[, c("surv", setdiff(colnames(dd_TCGA_surv),"surv"))]
+#dd_TCGA <- dd_TCGA[, c("metastasis", setdiff(colnames(dd_TCGA),"metastasis"))]
+#dd_TCGA$metastasis <- as.numeric(dd_TCGA$metastasis)
+dd_TCGA_surv <- mRMR.data(data = dd_TCGA_surv)
+
+set.seed(1)
+fs <- mRMR.ensemble(data = dd_TCGA_surv, target_indices = c(1), feature_count = 30, solution_count = 10)
+list <- unique(unlist(solutions(fs)))
+list <- setdiff(list, c(1))
+list_mRMR_surv <- featureNames(dd_TCGA_surv)[list]
+
+writeLines(list_mRMR_surv, "list_mRMR_surv.txt")
+
+df_score <- as.data.frame(matrix(ncol = 4, nrow = 300))
+names(df_score) <- c("gene_time", "score_time", "gene_status", "score_status")
+df_score$gene_time <- dd_TCGA_surv@feature_names[fs@filters[["1"]]]
+df_score$score_time  <- as.vector(scores(fs)[[1]])
+df_score$score_status  <- as.vector(scores(fs)[[2]])
+```
+
+```{r}
+
+df_score_union <- as.data.frame(matrix(ncol = 5, nrow = 67))
+names(df_score_union) <- c("gene", "score_time", "score_status", "count1", "count2")
+df_score_union$gene <-  union(df_score$gene_status, df_score$gene_time)
+row.names(df_score_union) <- df_score_union$gene
+
+df_score_union[names(table(df_score$gene_status)), "count1"] <- table(df_score$gene_status)
+
+df_score_union[names(table(df_score$gene_time)), "count2"] <- table(df_score$gene_time)
+
+```
+
+
