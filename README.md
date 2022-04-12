@@ -20,4 +20,7 @@ Patrick Terrematte<sup>1,2</sup>, Dhiego Souto Andrade<sup>1</sup> , Josivan Jus
 **Keywords:** Kidney cancer; clear cell Renal Cell Carcinoma (ccRCC); Gene signature; Prognosis; Survival analysis; Feature selection; Mutual Information; Machine Learning
 
 
-[<img src="./figs/fig1_flowchart.jpeg" width="200" />](Flowchart)
+[<img src="./figs/fig1_flowchart.jpeg" width="400" />](Flowchart)
+
+# Please cite any use of the figures and methodology.
+
