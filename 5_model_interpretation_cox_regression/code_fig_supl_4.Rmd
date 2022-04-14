@@ -1,5 +1,5 @@
 ---
-title: "R Notebook - Supplementary Figures: Forrest Plot for Cox model"
+title: "R Notebook - Forest Plot for Cox model"
 output: html_notebook
 ---
 

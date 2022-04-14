@@ -1,0 +1,279 @@
+---
+title: "Aalen's additive regression model and moDel Agnostic Language for Exploration and eXplanation (DALEX)"
+output:
+# pdf_document: default
+  # html_document: 
+  #   default
+  github_document: 
+    df_print: paged
+    html_preview: FALSE
+    keep_html: FALSE
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_format = "all") })      
+---
+
+  
+```{r error=TRUE, message=FALSE, warning=FALSE, include=FALSE, purl=FALSE, results='hide'}
+## This chunk automatically generates a text .R version of this script when running within knitr.
+# input  = knitr::current_input()  # filename of input document
+# output = paste(tools::file_path_sans_ext(input), 'R', sep = '.')
+# try(knitr::purl(input,output,documentation=2,quiet=T), silent = TRUE)
+# Avoid duplicate label error of knitr::purl
+options(knitr.duplicate.label = 'allow')
+# Code to browse the markdown file with renderized images.
+knitr::opts_chunk$set(
+  fig.path = "figs/dalex_mRMR-"
+)
+```
+
+
+# Installing and Loading Libraries            
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+# install https://indrajeetpatil.github.io/ggstatsplot/index.html
+# remotes::install_github("IndrajeetPatil/ggstatsplot")
+# sudo apt-get install libgmp3-dev
+# sudo apt-get install libmpfr-dev
+library("ggstatsplot")
+
+#packages_cran = c("tidyverse", "DALEX", "archivist", "caret","xgboost")
+packages_cran = c("tidyverse", "DALEX", "randomForest")
+  
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed from CRAN and loaded
+package.check <- lapply(packages_cran, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+
+rm(packages_cran, package.check)
+
+```
+
+```{r}
+# Load Data ---- 
+
+load(file = "../data/2.gsign_kidney.rda")
+load("../data/1.data.processed.rda")
+
+sign <- c("age", "gender", "metastasis", "AL353637.1", "AL138830.2", "DPP6", "FOXJ1", "HHLA2", "MICG", "LIMCH1", "VSX1")
+
+sign <- intersect(sign, colnames(data))
+
+data <- data[!is.na(data$metastasis), ]
+
+data$gender <-ifelse(data$gender == 1, "Male", "Female")
+```
+
+
+# Aalen's additive regression model for censored data
+
+The additive model provides an alternative to Cox regression. It can provide detailed information about temporal influence of each of the covariates not available in Cox's model.
+
+
+```{r}
+library(survival)
+  
+aa_fit <-aareg(as.formula(paste0("Surv(obs.time, status) ~ " , paste(sign, collapse= " + "))),
+               data = data)
+aa_fit
+
+```
+
+
+```{r}
+summary(aa_fit)  # provides a more complete summary of results
+```
+
+```{r}
+labs=c('alphabet','alphabet2', 'glasbey','kelly','polychrome', 'stepped', 'stepped2', 'stepped3', 'tol', 'watlington')
+op=par(mar=c(0,5,3,1))
+pal.bands(alphabet(), alphabet2(), glasbey(), kelly(),
+  polychrome(), stepped(), stepped2(), stepped3(), tol(), watlington(), labels=labs, show.names=FALSE)
+```
+
+
+```{r}
+library(ggfortify)
+library(survival)
+library(cowplot)
+library(ggstatsplot)
+library(pals) # pallete
+library(colorspace) # 
+library(ggsci)
+vars <- c("Intercept", "age", "genderMale",  "metastasisM1", "metastasisMX",  "AL353637.1", "AL138830.2", "DPP6", "FOXJ1", "HHLA2", "MICG", "LIMCH1", "VSX1")
+variables <- rev(factor(vars, levels=vars))
+
+#-- color decrease of lightness
+cols1 <- as.vector(glasbey(13))
+cols1 <- readhex(file = textConnection(paste(cols1, collapse = "\n")),
+                 class = "RGB")
+#transform to hue/lightness/saturation colorspace
+cols1 <- as(cols1, "HLS")
+#additive decrease of lightness
+cols1@coords[, "L"] <- pmax(0, cols1@coords[, "L"] + 0.05)
+cols1 <- as(cols1, "RGB")
+cols1 <- hex(cols1)
+
+
+p1 <- ggcoefstats(
+  x = aa_fit,
+  title = "Aalen's additive regression model",
+  subtitle = "(for censored data)",
+  only.significant = F,
+  #point.args = list(color = "green", shape = 9),
+  package = "pals",
+  palette = "glasbey",
+  sort = "none", 
+  k = 3
+) #+  ggplot2::scale_y_discrete(labels = vars) 
+
+p2 <- ggplot2::autoplot(aa_fit) +
+  theme(legend.position="none")
+
+p2$layers[[1]]$data$variable <- factor(p2$layers[[1]]$data$variable,
+                                       levels= variables)
+p2$layers[[2]]$data$variable <- factor(p2$layers[[2]]$data$variable,
+                                       levels= variables)
+p2$data$variable <- factor(p2$data$variable,
+                                       levels= variables)
+
+
+
+p2 <- p2 +
+  scale_fill_manual(values=rev(cols1))
+
+pdf("../plots/fig7_mRMR.aareg.pdf", width = 16, height = 8)
+  cowplot::plot_grid(p1, p2, labels = "AUTO", nrow=1, rel_widths = c(0.7,1))
+dev.off()
+
+```
+
+
+# DALEX and SHAP for Kidney Cancer with metastasis
+
+```{r}
+
+library("randomForest")
+library("DALEX")
+
+cols <- c(sign,  "obs.time", "status", "age", "gender", "prior.dx", "metastasis")
+
+data_shap <-  data[, cols] 
+
+
+pmale_old <-  data_shap["TCGA.B0.4845", ]
+pfeme_young <-  data_shap["TCGA.A3.3349", ]
+
+data_shap <- data_shap[! rownames(data_shap) %in% c("TCGA.B0.4845", "TCGA.A3.3349"), ]
+
+
+
+model_rf <- randomForest(metastasis ~ . , data = data_shap)
+
+explain_rf <- DALEX::explain(model = model_rf,  
+                        data = data_shap[, setdiff(colnames(data_shap), "metastasis")],
+                           y = data_shap$metastasis, 
+                       label = "Metastasis")
+
+```
+
+```{r}
+predict(explain_rf, pmale_old)
+```
+
+```{r}
+predict(explain_rf, pfeme_young)
+```
+
+
+
+```{r}
+shap_pmale_old <- predict_parts(explainer = explain_rf, 
+                      new_observation = pmale_old, 
+                                 type = "shap",
+                                    B = 25)
+
+plot(shap_pmale_old) +
+  ggsave("../plots/KIRC_5_dalex_mRMR_shap_pmale_old_metas.pdf", width = 14, height = 9, units = c("in"))
+```
+
+
+```{r}
+shap_pfeme_young <- predict_parts(explainer = explain_rf, 
+                      new_observation = pfeme_young, 
+                                 type = "shap",
+                                    B = 25)
+
+plot(shap_pfeme_young) +
+  ggsave("../plots/KIRC_5_dalex_mRMR_shap_pfeme_young_metas.pdf", width = 14, height = 9, units = c("in"))
+```
+
+
+# DALEX and SHAP for Kidney Cancer with status
+
+
+
+```{r}
+
+library("randomForest")
+library("DALEX")
+
+cols <- c(sign,  "obs.time", "status", "age", "gender", "prior.dx", "metastasis")
+
+data_shap <-  data[, cols]
+
+
+pmale_old <-  data_shap["TCGA.B0.4845", ]
+pfeme_young <-  data_shap["TCGA.A3.3349", ]
+
+data_shap <- data_shap[! rownames(data_shap) %in% c("TCGA.B0.4845", "TCGA.A3.3349"), ]
+
+data_shap <- data_shap[!is.na(data_shap$metastasis), ]
+
+data_shap$status <- as.factor(ifelse(data_shap$status == 1, "deceased", "alive")) 
+
+model_rf <- randomForest(status ~ . , data = data_shap)
+
+explain_rf <- DALEX::explain(model = model_rf,  
+                        data = data_shap[, setdiff(colnames(data_shap), "status")],
+                           y = data_shap$status, 
+                       label = "Vital Status")
+
+```
+
+
+```{r}
+predict(explain_rf, pmale_old)
+```
+
+```{r}
+predict(explain_rf, pfeme_young)
+```
+
+
+
+```{r}
+shap_pmale_old <- predict_parts(explainer = explain_rf, 
+                      new_observation = pmale_old, 
+                                 type = "shap")
+
+plot(shap_pmale_old)  +
+  ggsave("../plots/KIRC_5_dalex_mRMR_shap_pmale_old_status.pdf", width = 14, height = 9, units = c("in"))
+```
+
+
+```{r}
+shap_pfeme_young <- predict_parts(explainer = explain_rf, 
+                      new_observation = pfeme_young, 
+                                 type = "shap")
+
+plot(shap_pfeme_young) +
+  ggsave("../plots/KIRC_5_dalex_mRMR_shap_pfeme_young_status.pdf", width = 14, height = 9, units = c("in"))
+```
+

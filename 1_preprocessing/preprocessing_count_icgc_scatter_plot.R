@@ -1,7 +1,6 @@
-library(tidyverse)
-library(caret)
-
-if(!require(ggpubr)){BiocManager::install("ggpubr")}
+if(!require(tidyverse)){install.packages("tidyverse")}
+if(!require(caret)){install.packages("caret")}
+if(!require(ggpubr)){install.packages("ggpubr")}
 
 
 load("../data/2.data.full.count.rda")
@@ -29,7 +28,6 @@ df <- data_long %>%
 #   geom_point() +
 #   geom_abline(colour = "brown") 
 
-library(ggpubr)
 
 sp_raw <- ggscatter(df, x = "TCGA", y = "ICGC",
                 add = "reg.line",  # Add regressin line
@@ -37,10 +35,18 @@ sp_raw <- ggscatter(df, x = "TCGA", y = "ICGC",
                 title = "Raw counts",
                 add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
                 conf.int = TRUE # Add confidence interval
-)
-# Add correlation coefficient
-p1 <-sp_raw + stat_cor(method = "pearson", label.x = 40000, label.y = 70000) 
+                ) +
+                scale_x_continuous(labels = scales::comma_format(big.mark = ',',
+                                decimal.mark = '.')) +
+                scale_y_continuous(labels = scales::comma_format(big.mark = ',',
+                                                   decimal.mark = '.'))
 
+# Add correlation coefficient
+p1 <-sp_raw + stat_cor(method = "pearson", 
+                       label.x = 40000, 
+                       label.y = 70000,
+                       p.label = "p.label") 
+p1
 
 data_long <- data %>% 
   dplyr::select(!c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage")) %>% 
@@ -248,7 +254,6 @@ p_log
 # p_csn <- sp_csn + stat_cor(method = "pearson", label.x = -0.2, label.y = 40)
 # p_csn
 
-pdf("../../figs/figA1_normalization.pdf", width = 12, height = 15)
+pdf("../../figs/figA02_normalization.pdf", width = 12, height = 15)
 cowplot::plot_grid(p1, p_log,  p_devst, p2, p_range, p_rscale, labels = "auto", nrow=3)
 dev.off()
-

@@ -26,11 +26,13 @@ knitr::opts_chunk$set(
 )
 ```
 
-```{r}
-library(survival)
-library(survminer)
-library(dplyr)
-library(finalfit) # install.packages("finalfit")
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+if(!require("tidyverse")){install.packages("tidyverse")}
+if(!require("finalfit")){install.packages("finalfit")}
+if(!require("survival")){install.packages("survival")}
+if(!require("survminer")){install.packages("survminer")}
+if(!require("survminer")){install.packages("survminer")}
 
 ```
 
