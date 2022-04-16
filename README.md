@@ -22,5 +22,9 @@ Patrick Terrematte<sup>1,2</sup>, Dhiego Souto Andrade<sup>1</sup> , Josivan Jus
 
 [<img src="./figs/fig1_flowchart.jpeg" width="800" />](Flowchart)
 
-### Please cite any use of the figures and methodology.
+### Please cite any use of the scripts of figures, methodology, or results.
+
+To be published in Cancers/MDPI.
+
+
 
