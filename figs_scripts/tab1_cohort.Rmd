@@ -1,0 +1,37 @@
+---
+title: "Example knitr/R Markdown document"
+author: "Patrick Terrematte"
+output:
+  word_document: default
+---
+ 
+
+```{r}
+library(dplyr)
+library(finalfit)
+library(knitr)
+```
+
+## Table 1 - Clinical data
+
+
+```{r table1, echo = FALSE, results='asis'}
+
+load("../data/1.data.processed.rda")
+
+library(finalfit)
+# Crosstable 
+explanatory = c("obs.time", "status", "age", "gender", "neoplasm", "metastasis", "ajcc.stage")
+dependent = 'dataset'
+data %>%
+  mutate(status = case_when(status==1 ~ "Deceased",
+                            status==0 ~ "Alive")) %>%
+  mutate(gender = case_when(gender==1 ~ "Male",
+                            gender==0 ~ "Female")) %>%
+  summary_factorlist(dependent, explanatory, 
+  p=TRUE, add_dependent_label=TRUE) -> t1
+
+knitr::kable(t1,  row.names=FALSE,  align=c("l", "l", "r", "r", "r"))
+
+```
+

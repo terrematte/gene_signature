@@ -1,0 +1,14 @@
+Z-values represent standard deviations from the median across samples for the given cancer type. Log2 Spectral count ratio values from CPTAC were first normalized within each sample profile, then normalized across samples.
+http://ualcan.path.uab.edu/cgi-bin/CPTAC-Result.pl?genenam=HHLA2&ctype=RCC
+
+Comparison 	Statistical significance
+Normal-vs-Stage1 	2.12576091438065E-14
+Normal-vs-Stage2 	1.678702E-02
+Normal-vs-Stage3 	7.47500292090977E-07
+Normal-vs-Stage4 	9.111681E-03
+Stage1-vs-Stage2 	6.848439E-01
+Stage1-vs-Stage3 	7.743128E-01
+Stage1-vs-Stage4 	6.034508E-01
+Stage2-vs-Stage3 	7.899598E-01
+Stage2-vs-Stage4 	9.589318E-01
+Stage3-vs-Stage4 	7.188656E-0

@@ -1,0 +1,241 @@
+---
+title: "Dataframe of Signatures"
+output:
+# pdf_document: default
+  html_document: 
+    default
+  github_document: 
+    df_print: paged
+    html_preview: FALSE
+    keep_html: TRUE
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_format = "all") })      
+---
+
+  
+```{r error=TRUE, message=FALSE, warning=FALSE, include=FALSE, purl=FALSE, results='hide'}
+## This chunk automatically generates a text .R version of this script when running within knitr.
+input  = knitr::current_input()  # filename of input document
+output = paste(tools::file_path_sans_ext(input), 'R', sep = '.')
+try(knitr::purl(input,output,documentation=2,quiet=T), silent = TRUE)
+# Avoid duplicate label error of knitr::purl
+options(knitr.duplicate.label = 'allow')
+# Code to browse the markdown file with renderized images.
+knitr::opts_chunk$set(
+  fig.path = "figs/render-"
+)
+```
+
+
+# Installing and Loading Libraries            
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+#library(annotables) # BiocManager::install("annotate")
+# 
+# packages_bioconductor = c("clusterProfiler", "org.Hs.eg.db", "ReactomePA", "DOSE")
+# 
+# #use this function to check if each package is on the local machine
+# #if a package is installed, it will be loaded
+# #if any are not, the missing package(s) will be installed from Bioconductor and loaded
+# package.check <- lapply(packages_bioconductor, FUN = function(x) {
+#   if (!require(x, character.only = TRUE)) {
+#     BiocManager::install(x, dependencies = TRUE)
+#     library(x, character.only = TRUE)
+#   }
+# })
+
+# install.packages("mlr3extralearners")
+packages_cran = c("tidyverse", "bestNormalize", "mlr3", "mlr3verse", "mlr3proba", "mlr3extralearners",  "survival", "mRMRe", "xgboost", "glmnet", "gbm")
+  
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed from CRAN and loaded
+package.check <- lapply(packages_cran, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+
+library(annotables)
+
+library(tictoc) # devtools::install_github("collectivemedia/tictoc")
+
+rm(packages_cran, packages_bioconductor, package.check)
+
+```
+
+
+# mRMRe
+
+```{r}
+load("../data/1.data.processed.rda")
+load("../data/1.gsign_kidney.processed.rda")
+
+cols <- setdiff(colnames(data), c("neoplasm", "metastasis", "ajcc.stage", "dataset"))
+
+dd <- data[,cols]
+
+dd <- mRMR.data(data = dd)
+
+set.seed(1)
+fs <- mRMR.ensemble(data = dd, target_indices = c(1,2), feature_count = 20, solution_count = 5)
+
+genes.mRMR.time <- setdiff(dd@feature_names[fs@filters[["1"]]] , c("obs.time", "status"))
+
+genes.mRMR.status <- setdiff(dd@feature_names[fs@filters[["2"]]], c("obs.time", "status"))
+
+genes.mRMR <- union(genes.mRMR.time, genes.mRMR.status)
+
+
+gsign_kidney["fs.mRMR.time", c("id","cancer", "method")] <- list("fs.mRMR.time", "fs.mRMR.time","KIRC")
+gsign_kidney["fs.mRMR.time","signature"][[1]]  <- list(c( genes.mRMR.time ))
+gsign_kidney["fs.mRMR.status", c("id","cancer", "method")] <- list("fs.mRMR.status", "fs.mRMR.status","KIRC")
+gsign_kidney["fs.mRMR.status","signature"][[1]]  <-  list(c(genes.mRMR.status))
+gsign_kidney["fs.mRMR", c("id","cancer", "method")] <- list("fs.mRMR", "fs.mRMR","KIRC") 
+gsign_kidney["fs.mRMR","signature"][[1]]  <- list(c(genes.mRMR))
+
+save(genes.mRMR.time, genes.mRMR.status, genes.mRMR, file = "genes.fs.mRMR.rda", compress = T)
+
+rm(dd, fs, genes.mRMR.time, genes.mRMR.status, genes.mRMR)
+
+```
+
+
+# Filter - mlr3 
+
+## surv.gbm
+
+```{r}
+
+cols <- setdiff(colnames(data), c("neoplasm", "metastasis", "ajcc.stage", "dataset"))
+
+surv.task <-  TaskSurv$new(id = "surv", backend = data[,cols],
+                      time = "obs.time", event = "status", type = "right")
+
+set.seed(1)
+lrn =  lrn("surv.gbm")
+
+filter = flt("importance", learner = lrn)
+
+filter$calculate(surv.task)
+
+head(as.data.table(filter), 10)
+
+genes.filt.gbm <- head(as.data.table(filter), 30)[[1]]
+
+save(genes.filt.gbm, filter, file = "genes.filt.gbm.rda", compress = T)
+```
+
+
+## surv.rpart
+
+```{r}
+
+surv.task <-  TaskSurv$new(id = "surv", backend = data[,cols],
+                      time = "obs.time", event = "status", type = "right")
+
+set.seed(1)
+lrn =  lrn("surv.rpart")
+
+filter = flt("importance", learner = lrn)
+
+filter$calculate(surv.task)
+
+head(as.data.table(filter), 10) 
+
+genes.filt.rpart <- head(as.data.table(filter), 30)[[1]]
+
+save(genes.filt.rpart,filter, file = "genes.filt.rpart.rda", compress = T)
+
+```
+
+
+## surv.xgboost
+
+```{r}
+
+surv.task <-  TaskSurv$new(id = "surv", backend = data[,cols],
+                      time = "obs.time", event = "status", type = "right")
+
+set.seed(1)
+lrn =  lrn("surv.xgboost")
+
+filter = flt("importance", learner = lrn)
+
+filter$calculate(surv.task)
+
+head(as.data.table(filter), 10)
+
+genes.filt.xgboost <- head(as.data.table(filter), 30)[[1]]
+save(genes.filt.xgboost,filter, file = "genes.filt.xgboost.rda", compress = T)
+
+rm(surv.task, lrn, filter)
+```
+
+
+# Feature Selection - mlr3 - sfs
+
+```{r}
+# job_fs_boruta.R
+# job_mrl_rfe.R
+# job_mrl_gen.R
+```
+
+# Loading signatures
+
+```{r}
+load("../data/1.data.processed.rda")
+load("../data/1.gsign_kidney.processed.rda")
+
+load("genes.filt.xgboost.rda")
+load("genes.filt.rpart.rda") 
+load("genes.filt.gbm.rda") 
+
+load("genes.fs.boruta.rda") 
+load("genes.fs.gen.rda")
+load("genes.fs.mlr.rfe.rda")
+load("genes.fs.mRMR.rda") 
+
+rm(filter,instance, b)
+
+gsign_kidney["filt.gbm", c("id","cancer", "method")] <- list("filt.gbm","KIRC", "filt.gbm")
+gsign_kidney["filt.gbm","signature"][[1]]  <- list(c(genes.filt.gbm ))
+
+gsign_kidney["filt.rpart", c("id","cancer", "method")] <- list("filt.rpart","KIRC", "filt.rpart")
+gsign_kidney["filt.rpart","signature"][[1]]  <- list(c(genes.filt.rpart ))
+
+gsign_kidney["filt.xgboost", c("id","cancer", "method")] <- list("filt.xgboost","KIRC", "filt.xgboost")
+gsign_kidney["filt.xgboost","signature"][[1]]  <- list(c(genes.filt.xgboost ))
+
+gsign_kidney["fs.boruta", c("id","cancer", "method")] <- list("fs.boruta", "KIRC", "fs.boruta") 
+gsign_kidney["fs.boruta","signature"][[1]]  <- list(c(genes.fs.boruta))
+
+gsign_kidney["fs.genetic", c("id","cancer", "method")] <- list("fs.genetic","KIRC", "fs.genetic")
+gsign_kidney["fs.genetic","signature"][[1]]  <- list(c(genes.fs.gen))
+
+gsign_kidney["fs.mlr.rfe", c("id","cancer", "method")] <- list("fs.mlr.rfe", "KIRC", "fs.mlr.rfe") 
+gsign_kidney["fs.mlr.rfe","signature"][[1]]  <- list(c(genes.fs.mlr.rfe))
+
+# gsign_kidney["fs.sbs", c("id","cancer", "method")] <- list("fs.sfs","KIRC", "fs.sbs")
+# gsign_kidney["fs.sbs","signature"][[1]]  <- list(c(fs.sbs))
+
+gsign_kidney["fs.mRMR.time", c("id","cancer", "method")] <- list("fs.mRMR.time","KIRC", "fs.mRMR.time")
+gsign_kidney["fs.mRMR.time","signature"][[1]]  <- list(c( genes.mRMR.time ))
+gsign_kidney["fs.mRMR.status", c("id","cancer", "method")] <- list("fs.mRMR.status","KIRC", "fs.mRMR.status")
+gsign_kidney["fs.mRMR.status","signature"][[1]]  <-  list(c(genes.mRMR.status))
+gsign_kidney["fs.mRMR", c("id","cancer", "method")] <- list("fs.mRMR","KIRC", "fs.mRMR") 
+gsign_kidney["fs.mRMR","signature"][[1]]  <- list(c(genes.mRMR))
+
+rm(genes.mRMR.time, genes.mRMR.status, genes.mRMR, genes.filt.xgboost, genes.filt.rpart, genes.filt.gbm, genes.fs.gen, genes.fs.boruta, genes.fs.mlr.rfe)
+
+```
+
+
+# Save data and signatures
+
+```{r}
+save(gsign_kidney, file="../data/2.gsign_kidney.rda", compress = T)
+```
